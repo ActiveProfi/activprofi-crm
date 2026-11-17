@@ -238,13 +238,13 @@ async function route(req, res, db, cfg) {
     const session = requireUser(db, req);
     return send(res, 201, service.importLeads(db, session.user, await readJson(req)));
   }
-  const batchAction = pathname.match(/^\/api\/lead-batches\/([^/]+)\/(distribute|promote|group)$/);
+  const batchAction = pathname.match(/^\/api\/lead-batches\/([^/]+)\/(distribute|promote|group|archive|restore)$/);
   if (batchAction && method === 'POST') {
     const session = requireUser(db, req);
     const id = decodeURIComponent(batchAction[1]);
     const body = await readJson(req);
     const action = batchAction[2];
-    const result = action === 'distribute' ? service.distributeBatch(db, session.user, id, body) : action === 'promote' ? service.promoteBatch(db, session.user, id, body) : service.groupBatch(db, session.user, id, body);
+    const result = action === 'distribute' ? service.distributeBatch(db, session.user, id, body) : action === 'promote' ? service.promoteBatch(db, session.user, id, body) : action === 'archive' ? service.archiveBatch(db, session.user, id) : action === 'restore' ? service.restoreBatch(db, session.user, id) : service.groupBatch(db, session.user, id, body);
     return send(res, 200, result);
   }
 

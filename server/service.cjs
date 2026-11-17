@@ -60,6 +60,14 @@ function promoteBatch(db, user, id, body) {
   });
 }
 
+function archiveBatch(db, user, id) {
+  return command(db, user, (state, actor) => ({batch: Leads.archiveBatch(state, actor, id)}));
+}
+
+function restoreBatch(db, user, id) {
+  return command(db, user, (state, actor) => ({batch: Leads.restoreBatch(state, actor, id)}));
+}
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? text.slice(0, max) : text;
@@ -217,7 +225,7 @@ function importDump(db, user, body) {
 }
 
 module.exports = {
-  command, importLeads, groupBatch, distributeBatch, promoteBatch, ingestLeads,
+  command, importLeads, groupBatch, distributeBatch, promoteBatch, archiveBatch, restoreBatch, ingestLeads,
   createIntegrationKey, listIntegrationKeys, revokeIntegrationKey, findIntegrationKey,
   exportDump, importDump,
 };

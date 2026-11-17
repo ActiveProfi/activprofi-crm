@@ -239,6 +239,103 @@ test('import deduplicates on the server and integration key accepts Istok leads'
   }
 });
 
+test('source comments are stored on the contact and a fully transferred file is archived with a timestamp', async () => {
+  const {app, dir} = await listen();
+  try {
+    const irina = await login(app.port, 'irina', 'demo-pass-1');
+    const headers = ['Имя', 'Телефон', 'Комментарий менеджера', 'Примечания', 'Город'];
+    const rows = [['Анна Пример', '+7 999 111-22-33', 'Ждёт коммерческое предложение', 'Уточнить бюджет', 'Москва']];
+    const imported = await request(app.port, 'POST', '/api/lead-batches/import', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {headers, rows, map: ['name', 'phone', '', '', ''], opts: {name: 'База с комментарием', pipelineId: 'outbound', destination: 'base', kind: 'cold', file: 'comments.csv', fileDate: '2026-11-17'}},
+    });
+    assert.equal(imported.status, 201, JSON.stringify(imported.json));
+    const batchId = imported.json.batch.id;
+    const listed = await request(app.port, 'GET', '/api/clients', {cookie: irina});
+    const client = listed.json.clients.find(item => item.phone?.includes('111-22-33') || item.name === 'Анна Пример');
+    assert.ok(client);
+    assert.equal(client.sourceComment, 'Ждёт коммерческое предложение\nУточнить бюджет');
+    assert.equal(String(client.sourceComment).includes('Москва'), false);
+    const promoted = await request(app.port, 'POST', '/api/lead-batches/' + encodeURIComponent(batchId) + '/promote', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {pipelineId: 'outbound', stageId: 'out-2'},
+    });
+    assert.equal(promoted.status, 200, JSON.stringify(promoted.json));
+    assert.equal(promoted.json.loaded, 1);
+    const stored = promoted.json.state.clients.find(item => item.id === client.id);
+    assert.equal(stored.sourceComment, 'Ждёт коммерческое предложение\nУточнить бюджет');
+    assert.equal(stored.inLeadBase, false);
+    assert.equal(stored.stageId, 'out-2');
+    const batch = promoted.json.state.leadBatches.find(item => item.id === batchId);
+    assert.equal(batch.archived, true);
+    assert.match(batch.lastFunnelAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+10:00$/);
+    const again = await request(app.port, 'GET', '/api/workspace', {cookie: irina});
+    const savedBatch = again.json.state.leadBatches.find(item => item.id === batchId);
+    assert.equal(savedBatch.archived, true);
+    assert.equal(savedBatch.lastFunnelAt, batch.lastFunnelAt);
+    const restored = await request(app.port, 'POST', '/api/lead-batches/' + encodeURIComponent(batchId) + '/restore', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {},
+    });
+    assert.equal(restored.status, 200, JSON.stringify(restored.json));
+    assert.equal(restored.json.batch.archived, false);
+    assert.equal(restored.json.batch.lastFunnelAt, batch.lastFunnelAt);
+    const elena = await login(app.port, 'elena', 'demo-pass-1');
+    const denied = await request(app.port, 'POST', '/api/lead-batches/' + encodeURIComponent(batchId) + '/archive', {
+      cookie: elena,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {},
+    });
+    assert.equal(denied.status, 403);
+    const archived = await request(app.port, 'POST', '/api/lead-batches/' + encodeURIComponent(batchId) + '/archive', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {},
+    });
+    assert.equal(archived.status, 200, JSON.stringify(archived.json));
+    assert.equal(archived.json.batch.archived, true);
+    const partial = await request(app.port, 'POST', '/api/lead-batches/import', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {
+        headers: ['Имя', 'Телефон', 'Комментарий'],
+        rows: [['Борис Часть', '+7 999 444-55-66', 'Перезвонить'], ['Вера Часть', '+7 999 444-55-67', 'Ждут КП']],
+        map: ['name', 'phone', 'notes'],
+        opts: {name: 'Частичная база', pipelineId: 'outbound', destination: 'base', kind: 'cold', file: 'partial.csv', fileDate: '2026-11-17'},
+      },
+    });
+    assert.equal(partial.status, 201, JSON.stringify(partial.json));
+    const partialId = partial.json.batch.id;
+    const boris = partial.json.state.clients.find(item => item.name === 'Борис Часть');
+    boris.ownerId = 'sales';
+    const moved = await request(app.port, 'PUT', '/api/workspace', {
+      cookie: irina,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {revision: partial.json.state.revision, state: partial.json.state},
+    });
+    assert.equal(moved.status, 200, JSON.stringify(moved.json?.error || moved.status));
+    const elenaLoad = await request(app.port, 'POST', '/api/lead-batches/' + encodeURIComponent(partialId) + '/promote', {
+      cookie: elena,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {pipelineId: 'outbound', stageId: 'out-2'},
+    });
+    assert.equal(elenaLoad.status, 200, JSON.stringify(elenaLoad.json));
+    assert.equal(elenaLoad.json.loaded, 1);
+    const openBatch = elenaLoad.json.state.leadBatches.find(item => item.id === partialId);
+    assert.equal(openBatch.archived, undefined);
+    assert.equal(openBatch.funnelSent, 1);
+    assert.equal(openBatch.funnelTotal, 2);
+    assert.match(openBatch.lastFunnelAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+10:00$/);
+    assert.equal(elenaLoad.json.state.clients.find(item => item.id === boris.id).sourceComment, 'Перезвонить');
+  } finally {
+    await app.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('project file is stored on the server and hidden from other projects', async () => {
   const {app, dir} = await listen();
   try {
