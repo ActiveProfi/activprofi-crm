@@ -1,0 +1,14 @@
+{
+  "name": "activprofi-crm",
+  "private": true,
+  "description": "АктивПрофи CRM: серверная версия variant-b",
+  "scripts": {
+    "start": "node server/index.cjs",
+    "test": "node --test variant-b/*.test.cjs server/*.test.cjs",
+    "create-admin": "node server/create-admin.cjs",
+    "seed-demo": "node server/seed-demo.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
