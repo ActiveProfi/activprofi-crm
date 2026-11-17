@@ -1,0 +1,24 @@
+# Public source allowlist. Private working materials remain local.
+/*
+!/.gitignore
+!/README.md
+!/variant-b/
+/variant-b/*
+!/variant-b/*.js
+!/variant-b/*.css
+!/variant-b/index.html
+!/variant-b/preview.cjs
+!/variant-b/*.test.cjs
+!/variant-b/assets/
+!/variant-b/vendor/
+/variant-b/assets/*
+!/variant-b/assets/*.js
+!/variant-b/assets/*.css
+!/variant-b/assets/studio-logo.png
+/variant-b/vendor/*
+!/variant-b/vendor/exceljs.min.js
+!/variant-b/vendor/papaparse.min.js
+!/variant-b/vendor/*LICENSE.txt
+**/.env*
+**/*.log
+**/node_modules/
