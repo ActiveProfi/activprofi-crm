@@ -1,0 +1,213 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const {DatabaseSync} = require('node:sqlite');
+
+// Схема на обычном SQL: TEXT/INTEGER/BLOB.
+// При переходе на PostgreSQL BLOB станет BYTEA, а плейсхолдеры "?" — "$1".
+// Вся работа с базой идёт через этот файл, поэтому остальной код менять почти не придётся.
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  login TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role TEXT PRIMARY KEY,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS permission_audit (
+  seq INTEGER PRIMARY KEY,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pipelines (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  leader_id TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS clients (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL DEFAULT '',
+  pipeline_id TEXT NOT NULL DEFAULT '',
+  stage_id TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT '',
+  batch_id TEXT NOT NULL DEFAULT '',
+  in_lead_base INTEGER NOT NULL DEFAULT 0,
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_clients_owner ON clients(owner_id);
+CREATE INDEX IF NOT EXISTS idx_clients_batch ON clients(batch_id);
+CREATE TABLE IF NOT EXISTS contact_keys (
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  PRIMARY KEY (kind, value)
+);
+CREATE INDEX IF NOT EXISTS idx_contact_client ON contact_keys(client_id);
+CREATE TABLE IF NOT EXISTS lead_batches (
+  id TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  assignee_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
+CREATE TABLE IF NOT EXISTS materials (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outbox (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS communications (
+  id TEXT PRIMARY KEY,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS voice_campaigns (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messenger_channels (
+  id TEXT PRIMARY KEY,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  bytes BLOB NOT NULL,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS integration_api_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS integration_imports (
+  id TEXT PRIMARY KEY,
+  key_id TEXT,
+  source TEXT NOT NULL,
+  received INTEGER NOT NULL,
+  created_count INTEGER NOT NULL,
+  duplicate_count INTEGER NOT NULL,
+  error_count INTEGER NOT NULL,
+  batch_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+-- Задел под рассылки. Отправка писем и сообщений намеренно не реализована.
+CREATE TABLE IF NOT EXISTS mailings (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  channel TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  body TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  CHECK (status = 'draft')
+);
+`;
+
+function openDatabase(file) {
+  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), {recursive: true});
+  const db = new DatabaseSync(file);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
+  db.exec('PRAGMA foreign_keys = ON');
+  return wrap(db);
+}
+
+function wrap(raw) {
+  return {
+    raw,
+    exec(sql) { raw.exec(sql); },
+    get(sql, ...params) {
+      const row = raw.prepare(sql).get(...params);
+      return row ? Object.assign({}, row) : undefined;
+    },
+    all(sql, ...params) {
+      return raw.prepare(sql).all(...params).map(row => Object.assign({}, row));
+    },
+    run(sql, ...params) {
+      return raw.prepare(sql).run(...params);
+    },
+    transaction(fn) {
+      raw.exec('BEGIN IMMEDIATE');
+      try {
+        const result = fn();
+        raw.exec('COMMIT');
+        return result;
+      } catch (error) {
+        try { raw.exec('ROLLBACK'); } catch { /* уже откатили */ }
+        throw error;
+      }
+    },
+    close() { raw.close(); },
+  };
+}
+
+function migrate(db) {
+  db.exec(SCHEMA);
+  const done = db.get('SELECT id FROM schema_migrations WHERE id = ?', '001-initial');
+  if (!done) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '001-initial', new Date().toISOString());
+}
+
+module.exports = {openDatabase, migrate, SCHEMA};

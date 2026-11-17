@@ -14,3 +14,11 @@ input::placeholder,textarea::placeholder{color:#5b6f7d;opacity:1}.btn{border-col
 
 /* File cards inside result categories */
 .batch-card > small { display: block; margin-top: 8px; overflow-wrap: anywhere; }
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#edf2f6;padding:24px}
+#login-screen[hidden],#sidebar[hidden],.workspace[hidden]{display:none !important}
+.login-card{width:min(420px,100%);background:#fff;border:1px solid #c5d2db;border-radius:12px;padding:28px;box-shadow:0 8px 24px #12374c14}
+.login-card h1{margin:12px 0 4px;font-size:24px;color:#173d50}
+.login-card p{color:#465e6e;line-height:1.5}
+.login-card img{width:72px;height:auto}
+.migration-banner{margin:0 0 16px}
+.header-right .btn{margin-left:8px}
