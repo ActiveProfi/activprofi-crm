@@ -59,5 +59,38 @@ function updateTask(s,u,id,patch){const t=s.tasks.find(t=>t.id===id);if(!t||!can
 function moveClient(s,u,id,pipelineId,stageId){const c=s.clients.find(c=>c.id===id),pipe=s.pipelines.find(p=>p.id===pipelineId);if(!c||!has(s,u,'clients.edit')||!canClient(s,u,c))throw Error('Нет доступа к клиенту');if(!pipe?.stages.some(t=>t.id===stageId))throw Error('Этап не найден');c.inLeadBase=false;c.pipelineId=pipelineId;c.stageId=stageId;c.stage=stage(s,c).name;c.stageHistory??=[];c.stageHistory.push({at:today(),stageId});}
 function addStage(s,u,pipeId,name,kind='open'){if(!has(s,u,'pipelines.manage'))throw Error('Этапы настраивает админ или руководитель');if(!name?.trim())throw Error('Введите название этапа');const p=s.pipelines.find(p=>p.id===pipeId);if(!p)throw Error('Воронка не найдена');if(p.stages.some(t=>t.name.toLowerCase()===name.trim().toLowerCase()))throw Error('Такой этап уже существует');const t={id:uid(),name:name.trim(),kind};p.stages.push(t);return t}
 function report(s,u,filter={}){const ps=visibleProjects(s,u);let ts=visibleTasks(s,u),cs=visibleClients(s,u).filter(c=>!c.inLeadBase);if(filter.project){ts=ts.filter(t=>t.projectId===filter.project);cs=cs.filter(c=>c.project===filter.project)}if(filter.from)cs=cs.filter(c=>c.createdAt>=filter.from);if(filter.to)cs=cs.filter(c=>c.createdAt<=filter.to);const won=cs.filter(c=>stage(s,c)?.kind==='won'),lost=cs.filter(c=>stage(s,c)?.kind==='lost');return {projects:ps.filter(p=>!filter.project||p.id===filter.project),tasks:ts,clients:cs,won,lost,conversion:cs.length?won.length/cs.length*100:0,total:cs.reduce((a,c)=>a+(+c.amount||0),0),wonTotal:won.reduce((a,c)=>a+(+c.amount||0),0),risk:risk(ts,filter.today),finance:has(s,u,'finance.view'),sales:has(s,u,'sales.analytics')}}
-const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,stage,risk,progress,addTask,updateTask,moveClient,addStage,report};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
+// Руководитель: админ, руководитель проекта или начальник разработки. Проджект: проджект-менеджер, админ или начальник разработки.
+const leaderRoles=['admin','leader','dev_head'];
+const managerRoles=['pm','admin','dev_head'];
+const teamRoleHint='Нет сотрудников с нужной ролью — добавьте их в разделе «Команда и роли»';
+const teamFallbackHint=teamRoleHint+'. Сейчас можно выбрать админа или начальника разработки.';
+const activeUser=user=>user&&user.active!==false;
+function userLabel(user){return (user?.name||'Не назначен')+' · '+(roles[user?.role]||'роль не указана')}
+function projectLeaderChoices(users){return (users||[]).filter(user=>activeUser(user)&&leaderRoles.includes(user.role))}
+function projectManagerChoices(users){return (users||[]).filter(user=>activeUser(user)&&managerRoles.includes(user.role))}
+function projectMemberChoices(users){return (users||[]).filter(user=>user&&user.role!=='admin')}
+function projectTeamHint(people,kind){const list=people||[];if(kind==='members')return list.length?'':teamRoleHint;const dedicated=kind==='leader'?'leader':'pm';if(!list.length)return teamRoleHint;if(!list.some(user=>user.role===dedicated))return teamFallbackHint;return ''}
+function normalizeProjectTeam(users,actor,project,previous){
+ const list=users||[];
+ const explicitLeader=String(project?.leaderId||'').trim();
+ const leaderId=explicitLeader||previous?.leaderId||actor?.id||'';
+ const leader=list.find(user=>user&&user.id===leaderId);
+ if(!leader)throw Error('Руководитель проекта не найден');
+ const leaderChanged=!previous||leaderId!==previous.leaderId;
+ if(leaderChanged&&leaderId!==actor?.id&&!leaderRoles.includes(leader.role))throw Error('Руководителем может быть админ, руководитель проекта или начальник разработки');
+ const explicitPm=String(project?.pmId||'').trim();
+ let pmId='';
+ if(explicitPm){
+  const pm=list.find(user=>user&&user.id===explicitPm);
+  if(!pm)throw Error('Проджект-менеджер не найден');
+  const pmChanged=!previous||explicitPm!==(previous.pmId||'');
+  if(pmChanged&&!managerRoles.includes(pm.role))throw Error('Проджект-менеджером может быть проджект-менеджер, админ или начальник разработки');
+  pmId=explicitPm;
+ }
+ const members=[];
+ for(const id of [...(project?.members||[]),leaderId,pmId]){if(id&&!members.includes(id))members.push(id)}
+ if(members.some(id=>!list.some(user=>user&&user.id===id)))throw Error('Участник проекта не найден');
+ return {leaderId,pmId,members};
+}
+const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,stage,risk,progress,addTask,updateTask,moveClient,addStage,report,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
 })(globalThis);
