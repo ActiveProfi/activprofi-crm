@@ -296,6 +296,10 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
       masked: maskToken(current),
       teamChatId: team?.chat_id || '',
       unread: chats.reduce((sum, chat) => sum + chat.unread, 0),
+      byProject: chats.reduce((bag, chat) => {
+        if (chat.link?.scope === 'project' && chat.link.projectId) bag[chat.link.projectId] = (bag[chat.link.projectId] || 0) + chat.unread;
+        return bag;
+      }, {}),
     };
   }
 
@@ -347,7 +351,8 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     assertSee(user, chatId);
     const last = Number(db.get('SELECT MAX(id) AS id FROM telegram_messages WHERE chat_id = ?', String(chatId))?.id || 0);
     db.run('INSERT INTO telegram_reads (user_id, chat_id, last_id) VALUES (?, ?, ?) ON CONFLICT(user_id, chat_id) DO UPDATE SET last_id = excluded.last_id', user.id, String(chatId), last);
-    return {unread: status(user).unread};
+    const current = status(user);
+    return {unread: current.unread, byProject: current.byProject};
   }
 
   async function send(user, chatId, text) {
