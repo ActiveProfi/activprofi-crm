@@ -464,3 +464,112 @@ test('integration key can place a deal on Отправлено КП and returns 
     fs.rmSync(dir, {recursive: true, force: true});
   }
 });
+
+test('project team accepts admin, dev head and pm, and keeps developer task scope', async () => {
+  const {app, dir} = await listen();
+  try {
+    const admin = await login(app.port, 'admin', 'admin-pass-1');
+    const browser = {'X-Requested-With': 'ActivProfi'};
+    const created = await request(app.port, 'POST', '/api/projects', {
+      cookie: admin,
+      headers: browser,
+      body: {
+        title: 'Напоминания о сеансе',
+        client: 'Студия массажа',
+        description: 'Проверка команды проекта',
+        start: '2026-11-18',
+        due: '2026-12-25',
+        budget: 250000,
+        leaderId: 'devhead',
+        pmId: 'pm',
+        members: ['anna', 'sales'],
+      },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    const project = created.json.state.projects.find(item => item.title === 'Напоминания о сеансе');
+    assert.equal(project.leaderId, 'devhead');
+    assert.equal(project.pmId, 'pm');
+    assert.deepEqual(project.members, ['anna', 'sales', 'devhead', 'pm']);
+
+    const blank = await request(app.port, 'POST', '/api/projects', {
+      cookie: admin,
+      headers: browser,
+      body: {title: 'Без команды', client: 'Заказчик', start: '2026-11-18', due: '2026-12-01', leaderId: '', pmId: '', members: []},
+    });
+    assert.equal(blank.status, 201, JSON.stringify(blank.json));
+    const fallback = blank.json.state.projects.find(item => item.title === 'Без команды');
+    assert.equal(fallback.leaderId, 'admin');
+    assert.equal(fallback.pmId, '');
+    assert.deepEqual(fallback.members, ['admin']);
+
+    const badLeader = await request(app.port, 'POST', '/api/projects', {
+      cookie: admin,
+      headers: browser,
+      body: {title: 'Чужой руководитель', client: 'Заказчик', leaderId: 'anna', pmId: '', members: []},
+    });
+    assert.equal(badLeader.status, 400);
+    assert.match(badLeader.json.error, /Руководителем может быть/);
+
+    const badPm = await request(app.port, 'POST', '/api/projects', {
+      cookie: admin,
+      headers: browser,
+      body: {title: 'Чужой проджект', client: 'Заказчик', leaderId: 'admin', pmId: 'sales', members: []},
+    });
+    assert.equal(badPm.status, 400);
+    assert.match(badPm.json.error, /Проджект-менеджером может быть/);
+
+    const missing = await request(app.port, 'POST', '/api/projects', {
+      cookie: admin,
+      headers: browser,
+      body: {title: 'Пустой id', client: 'Заказчик', leaderId: 'lead', pmId: 'ghost', members: []},
+    });
+    assert.equal(missing.status, 400);
+
+    const taskBody = {projectId: project.id, start: '2026-11-18', due: '2026-12-01', estimate: 4, remaining: 4, type: 'work'};
+    const own = await request(app.port, 'POST', '/api/tasks', {
+      cookie: admin,
+      headers: browser,
+      body: {...taskBody, title: 'Задача Анны', assigneeId: 'anna'},
+    });
+    assert.equal(own.status, 201, JSON.stringify(own.json));
+    const foreign = await request(app.port, 'POST', '/api/tasks', {
+      cookie: admin,
+      headers: browser,
+      body: {...taskBody, title: 'Задача Елены', assigneeId: 'sales'},
+    });
+    assert.equal(foreign.status, 201, JSON.stringify(foreign.json));
+
+    const anna = await login(app.port, 'anna', 'demo-pass-1');
+    const annaProjects = await request(app.port, 'GET', '/api/projects', {cookie: anna});
+    assert.ok(annaProjects.json.projects.some(item => item.id === project.id));
+    assert.ok(annaProjects.json.projects.some(item => item.id === '1'));
+    const annaTasks = await request(app.port, 'GET', '/api/tasks', {cookie: anna});
+    const annaOnProject = annaTasks.json.tasks.filter(item => item.projectId === project.id);
+    assert.deepEqual(annaOnProject.map(item => item.title), ['Задача Анны']);
+
+    const elena = await login(app.port, 'elena', 'demo-pass-1');
+    const elenaProjects = await request(app.port, 'GET', '/api/projects', {cookie: elena});
+    assert.ok(elenaProjects.json.projects.some(item => item.id === project.id));
+    const elenaTasks = await request(app.port, 'GET', '/api/tasks', {cookie: elena});
+    assert.deepEqual(elenaTasks.json.tasks.filter(item => item.projectId === project.id).map(item => item.title), ['Задача Елены']);
+
+    const maria = await login(app.port, 'maria', 'demo-pass-1');
+    const mariaProjects = await request(app.port, 'GET', '/api/projects', {cookie: maria});
+    assert.equal(mariaProjects.json.projects.some(item => item.id === project.id), false);
+    assert.ok(mariaProjects.json.projects.every(item => item.leaderId === 'lead'));
+
+    const moved = await request(app.port, 'PATCH', '/api/projects/' + project.id, {
+      cookie: admin,
+      headers: browser,
+      body: {devStage: 'dev-r1'},
+    });
+    assert.equal(moved.status, 200, JSON.stringify(moved.json));
+    const updated = moved.json.state.projects.find(item => item.id === project.id);
+    assert.equal(updated.devStage, 'dev-r1');
+    assert.equal(updated.leaderId, 'devhead');
+    assert.equal(updated.pmId, 'pm');
+  } finally {
+    await app.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});

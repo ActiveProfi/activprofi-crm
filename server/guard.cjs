@@ -218,14 +218,13 @@ function applyProjects(state, user, presented, incoming) {
       if (!M.has(state, user, 'projects.create')) throw new HttpError(403, 'Создание проектов недоступно');
       if (!String(project.title || '').trim() || !String(project.client || '').trim()) throw new HttpError(400, 'Заполните название и заказчика');
       if (project.start && project.due && project.start > project.due) throw new HttpError(400, 'Начало позже срока');
-      const leaderId = project.leaderId || user.id;
-      const members = [...new Set([...(project.members || []), leaderId, project.pmId].filter(Boolean))];
-      if (members.some(member => !state.users.some(item => item.id === member))) throw new HttpError(400, 'Участник проекта не найден');
+      const team = runDomain(() => M.normalizeProjectTeam(state.users, user, project, null));
       state.projects.push({
         ...project,
         id,
-        leaderId,
-        members,
+        leaderId: team.leaderId,
+        pmId: team.pmId,
+        members: team.members,
         devStage: Delivery.stageById(project.devStage) ? project.devStage : 'dev-start',
         budget: M.has(state, user, 'finance.view') ? Number(project.budget) || 0 : 0,
         recipients: project.recipients || [],
@@ -240,9 +239,14 @@ function applyProjects(state, user, presented, incoming) {
     const keys = changedKeys(before, project);
     const shell = keys.filter(key => PROJECT_SHELL.includes(key) && !(key === 'budget' && !M.has(state, user, 'finance.view')));
     if (shell.length && !M.canManage(state, user, id)) throw new HttpError(403, 'Настройки проекта меняет руководитель или админ');
-    if (shell.includes('members') || shell.includes('leaderId')) {
-      const members = project.members || [];
-      if (members.some(member => !state.users.some(item => item.id === member))) throw new HttpError(400, 'Участник проекта не найден');
+    if (shell.some(key => key === 'members' || key === 'leaderId' || key === 'pmId')) {
+      const team = runDomain(() => M.normalizeProjectTeam(state.users, user, project, before));
+      project.leaderId = team.leaderId;
+      project.pmId = team.pmId;
+      project.members = team.members;
+      for (const key of ['leaderId', 'pmId', 'members']) {
+        if (!shell.includes(key) && !same(before[key], project[key])) shell.push(key);
+      }
     }
     if (project.start && project.due && project.start > project.due) throw new HttpError(400, 'Начало позже срока');
     for (const key of [...shell, ...keys.filter(key => ['board', 'mockup', 'sheets', 'recipients'].includes(key))]) {
