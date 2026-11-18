@@ -218,6 +218,47 @@ function migrate(db) {
   // Сам этап хранится в JSON воронки и добавляется в upgrade. Здесь только отметка, что миграция известна базе.
   const proposal = db.get('SELECT id FROM schema_migrations WHERE id = ?', '003-proposal-stage');
   if (!proposal) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '003-proposal-stage', new Date().toISOString());
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS telegram_chats (
+      chat_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      username TEXT NOT NULL DEFAULT '',
+      chat_type TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS telegram_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      tg_user_id TEXT NOT NULL DEFAULT '',
+      tg_username TEXT NOT NULL DEFAULT '',
+      tg_name TEXT NOT NULL DEFAULT '',
+      crm_user_id TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'text',
+      file_id TEXT NOT NULL DEFAULT '',
+      file_name TEXT NOT NULL DEFAULT '',
+      reply_to TEXT NOT NULL DEFAULT '',
+      edited INTEGER NOT NULL DEFAULT 0,
+      sent_at TEXT NOT NULL,
+      UNIQUE (chat_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tg_messages_chat ON telegram_messages (chat_id, id);
+    CREATE TABLE IF NOT EXISTS telegram_reads (
+      user_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      last_id INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, chat_id)
+    );
+    CREATE TABLE IF NOT EXISTS telegram_links (
+      scope TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '',
+      chat_id TEXT NOT NULL,
+      PRIMARY KEY (scope, project_id)
+    );
+  `);
+  const telegram = db.get('SELECT id FROM schema_migrations WHERE id = ?', '004-telegram');
+  if (!telegram) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '004-telegram', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};

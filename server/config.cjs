@@ -30,6 +30,9 @@ function config() {
     seedDemo: process.env.SEED_DEMO === '1',
     seedPassword: process.env.SEED_PASSWORD || '',
     integrationPipelineId: process.env.INTEGRATION_PIPELINE_ID || '',
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    telegramMock: process.env.TELEGRAM_MOCK === '1',
+    telegramMockSeed: process.env.TELEGRAM_MOCK_SEED === '1',
   };
 }
 
