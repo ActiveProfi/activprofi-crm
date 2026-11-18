@@ -181,6 +181,11 @@ test('HTTP mock: team reply is signed and a stranger cannot read the project gro
     assert.equal(list.json.chats.some(chat => chat.chatId === team.chatId && chat.visible), true);
     const badge = await request(app.port, 'GET', '/api/telegram/badge', {cookie: outsider});
     assert.equal(typeof badge.json.unread, 'number');
+    assert.equal(badge.json.byProject.studio || 0, 0);
+    const memberLogin = await request(app.port, 'POST', '/api/auth/login', {body: {login: 'member', password: 'member-pass-1'}});
+    const member = memberLogin.cookie[0].split(';')[0];
+    const memberBadge = await request(app.port, 'GET', '/api/telegram/badge', {cookie: member});
+    assert.equal(memberBadge.json.byProject.studio > 0, true);
   } finally {
     await app.close();
     fs.rmSync(dir, {recursive: true, force: true});

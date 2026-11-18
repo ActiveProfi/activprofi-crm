@@ -423,7 +423,10 @@ async function route(req, res, db, cfg) {
       res.end(file.bytes);
       return;
     }
-    if (pathname === '/api/telegram/badge' && method === 'GET') return send(res, 200, {unread: bot.status(session.user).unread});
+    if (pathname === '/api/telegram/badge' && method === 'GET') {
+      const status = bot.status(session.user);
+      return send(res, 200, {unread: status.unread, byProject: status.byProject || {}});
+    }
     if (pathname === '/api/telegram' && method === 'GET') return send(res, 200, bot.overview(session.user));
     if (pathname === '/api/telegram/token' && method === 'POST') {
       const body = await readJson(req, 16 * 1024);
