@@ -35,10 +35,59 @@ function parseRows(rows) {
   return rows.map(row => JSON.parse(row.data));
 }
 
+function canonicalLogin(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+// Вход проверяет колонку users.login. В JSON-карточке логин мог остаться скопированным
+// от другого сотрудника. Тогда любое сохранение заново вставляет всех и ловит UNIQUE.
+function loginFromColumn(row, counts) {
+  const raw = String(row.login || '').trim();
+  const key = raw.toLowerCase();
+  if (!raw) return '';
+  return counts.get(key) === 1 ? key : raw;
+}
+
+function loginCounts(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const key = canonicalLogin(row.login);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function userFromRow(row, counts) {
+  const data = JSON.parse(row.data);
+  const login = loginFromColumn(row, counts);
+  if (login) data.login = login;
+  delete data.password;
+  delete data.password_hash;
+  return data;
+}
+
+function repairUserLogins(db) {
+  const rows = db.all('SELECT id, login, data FROM users');
+  const counts = loginCounts(rows);
+  for (const row of rows) {
+    let data;
+    try { data = JSON.parse(row.data) || {}; }
+    catch { continue; }
+    const login = loginFromColumn(row, counts);
+    if (!login) continue;
+    if (String(row.login) === login && String(data.login || '') === login && data.password == null && data.password_hash == null) continue;
+    data.login = login;
+    delete data.password;
+    delete data.password_hash;
+    db.run('UPDATE users SET login = ?, data = ? WHERE id = ?', login, JSON.stringify(data), row.id);
+  }
+}
+
 function load(db) {
+  const userRows = db.all('SELECT id, login, data FROM users ORDER BY rowid');
   const state = {
     schema: Number(setting(db, 'schema') || 2),
-    users: parseRows(db.all('SELECT data FROM users ORDER BY rowid')),
+    users: userRows.map(row => userFromRow(row, loginCounts(userRows))),
     pipelines: parseRows(db.all('SELECT data FROM pipelines ORDER BY position, rowid')),
     projects: parseRows(db.all('SELECT data FROM projects ORDER BY rowid')),
     clients: parseRows(db.all('SELECT data FROM clients ORDER BY rowid')),
@@ -62,7 +111,6 @@ function load(db) {
   if (leadsVersion) state.leadsVersion = Number(leadsVersion);
   if (manual) state.manualFunnelVersion = Number(manual);
   if (cold) state.coldStageVersion = Number(cold);
-  for (const user of state.users) delete user.password;
   return state;
 }
 
@@ -82,11 +130,18 @@ function save(db, state, options = {}) {
   const passwords = options.passwords || {};
   const previous = new Map(db.all('SELECT id, login, password_hash FROM users').map(row => [row.id, row]));
   clearDomain(db);
+  const used = new Set();
   for (const user of state.users || []) {
     const prior = previous.get(user.id);
-    const login = String(user.login || prior?.login || '').trim().toLowerCase();
+    const column = canonicalLogin(prior?.login);
+    let login = canonicalLogin(user.login) || column;
+    // Карточка повторяет чужой логин, а колонка — настоящий и ещё свободна.
+    if (used.has(login) && column && column !== login && !used.has(column)) login = column;
     const passwordHash = passwords[user.id] || prior?.password_hash;
     if (!login || !passwordHash) throw new HttpError(400, 'У сотрудника должны быть логин и пароль');
+    if (used.has(login)) throw new HttpError(409, 'Такой логин уже занят');
+    used.add(login);
+    user.login = login;
     const data = {...user, login};
     delete data.password;
     delete data.password_hash;
@@ -96,7 +151,7 @@ function save(db, state, options = {}) {
         user.id, login, passwordHash, user.role || 'sales', user.active === false ? 0 : 1, JSON.stringify(data),
       );
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) throw new HttpError(409, 'Такой логин уже занят');
+      if (String(error.message).includes('users.login')) throw new HttpError(409, 'Такой логин уже занят');
       throw error;
     }
   }
@@ -169,9 +224,14 @@ function readSession(db, token) {
     db.run('DELETE FROM sessions WHERE token_hash = ?', row.token_hash);
     return undefined;
   }
-  const user = db.get('SELECT data FROM users WHERE id = ?', row.user_id);
+  const user = db.get('SELECT login, data FROM users WHERE id = ?', row.user_id);
   if (!user) return undefined;
-  return {tokenHash: row.token_hash, user: JSON.parse(user.data)};
+  const parsed = JSON.parse(user.data);
+  const login = canonicalLogin(user.login);
+  if (login) parsed.login = login;
+  delete parsed.password;
+  delete parsed.password_hash;
+  return {tokenHash: row.token_hash, user: parsed};
 }
 
 function deleteSession(db, token) {
@@ -205,6 +265,6 @@ function addIntegrationImport(db, row) {
 }
 
 module.exports = {
-  SETTING_KEYS, load, save, revision, setRevision, bump, userCount, publicUser,
+  SETTING_KEYS, load, save, repairUserLogins, canonicalLogin, revision, setRevision, bump, userCount, publicUser,
   createSession, readSession, deleteSession, findUserByLogin, putFile, getFile, addIntegrationImport,
 };

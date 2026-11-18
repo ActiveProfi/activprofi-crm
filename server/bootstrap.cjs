@@ -133,6 +133,8 @@ function seedDemo(db, cfg) {
 }
 
 function ensureBoot(db, cfg) {
+  // Чинит уже существующую базу: логин для входа берётся из колонки, сделки и проекты не трогаются.
+  store.repairUserLogins(db);
   if (store.userCount(db)) return;
   if (cfg.seedDemo) {
     seedDemo(db, cfg);

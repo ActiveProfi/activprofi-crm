@@ -168,8 +168,13 @@ function applyUsers(state, actor, presented, incoming, secrets) {
       if (change.user.login) {
         const login = String(change.user.login).trim().toLowerCase();
         if (!/^[a-z0-9._-]{3,32}$/.test(login)) throw new HttpError(400, 'Проверьте логин');
-        if (state.users.some(item => item.id !== change.user.id && String(item.login || '').toLowerCase() === login)) throw new HttpError(409, 'Такой логин уже занят');
-        state.users.find(item => item.id === change.user.id).login = login;
+        const current = state.users.find(item => item.id === change.user.id);
+        const own = String(current?.login || '').trim().toLowerCase();
+        const taken = state.users.some(item => item.id !== change.user.id && String(item.login || '').trim().toLowerCase() === login);
+        if (taken) {
+          // Форма настроек не меняет логин. Повтор чужого логина в карточке не должен блокировать роль и права.
+          if (!own || own === login) throw new HttpError(409, 'Такой логин уже занят');
+        } else if (current) current.login = login;
       }
       if (secrets.passwords[change.user.id]) {
         if (secrets.passwords[change.user.id].length < 8) throw new HttpError(400, 'Пароль — не короче 8 символов');

@@ -5,6 +5,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {start} = require('./app.cjs');
+const {openDatabase, migrate} = require('./db.cjs');
+const {createAdmin} = require('./bootstrap.cjs');
+const store = require('./store.cjs');
+const {hashPassword} = require('./passwords.cjs');
 
 async function listen() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-'));
@@ -568,6 +572,127 @@ test('project team accepts admin, dev head and pm, and keeps developer task scop
     assert.equal(updated.devStage, 'dev-r1');
     assert.equal(updated.leaderId, 'devhead');
     assert.equal(updated.pmId, 'pm');
+  } finally {
+    await app.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('copied profile login does not block employees, and a real duplicate still fails', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-login-'));
+  const databasePath = path.join(dir, 'crm.sqlite');
+  const setup = openDatabase(databasePath);
+  migrate(setup);
+  createAdmin(setup, {adminLogin: 'admin', adminPassword: 'admin-pass-1', adminName: 'Админ'});
+  const adminRow = setup.get('SELECT data FROM users WHERE id = ?', 'admin');
+  const copied = JSON.parse(adminRow.data);
+  copied.id = 'test';
+  copied.name = 'Тестовый';
+  copied.login = 'admin';
+  setup.run(
+    'INSERT INTO users (id, login, password_hash, role, active, data) VALUES (?, ?, ?, ?, ?, ?)',
+    'test', 'test', hashPassword('test-pass-1'), 'admin', 1, JSON.stringify(copied),
+  );
+  const project = {
+    id: 'kept-project', title: 'Существующий проект', client: 'Старый заказчик', description: 'Нельзя потерять',
+    type: 'crm', status: 'Проектирование', leaderId: 'admin', pmId: '', members: ['admin'],
+    start: '2026-11-01', due: '2026-12-01', budget: 1000, next: '', recipients: [],
+    board: {notes: [], links: [], comments: []}, mockup: {name: '', data: ''}, devStage: 'dev-start',
+  };
+  setup.run('INSERT INTO projects (id, leader_id, dev_stage, data) VALUES (?, ?, ?, ?)', project.id, 'admin', 'dev-start', JSON.stringify(project));
+  const client = {
+    id: 'kept-client', name: 'Старый клиент', company: 'Фирма', phone: '+7 999 000-11-22', email: 'old@example.test',
+    socials: '', amount: 5000, source: 'Вручную', pipelineId: 'inbound', stageId: 'stage-new', ownerId: 'admin',
+    inLeadBase: false, project: 'kept-project', notes: ['уже был'], stageHistory: [], createdAt: '2026-11-01',
+  };
+  setup.run(
+    'INSERT INTO clients (id, owner_id, pipeline_id, stage_id, project_id, batch_id, in_lead_base, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    client.id, 'admin', 'inbound', 'stage-new', 'kept-project', '', 0, JSON.stringify(client),
+  );
+  setup.close();
+
+  const boot = {
+    host: '127.0.0.1', port: 0, databasePath, seedDemo: false,
+    adminLogin: 'admin', adminPassword: 'admin-pass-1', adminName: 'Админ', sessionDays: 2, cookieSecure: false,
+  };
+  const browser = {'X-Requested-With': 'ActivProfi'};
+  let app = await start(boot);
+  try {
+    const healed = openDatabase(databasePath);
+    const testRow = healed.get('SELECT login, data FROM users WHERE id = ?', 'test');
+    assert.equal(testRow.login, 'test');
+    assert.equal(JSON.parse(testRow.data).login, 'test');
+    assert.equal(healed.get('SELECT id FROM projects WHERE id = ?', 'kept-project').id, 'kept-project');
+    healed.close();
+
+    const admin = await login(app.port, 'admin', 'admin-pass-1');
+    const testLogin = await login(app.port, 'test', 'test-pass-1');
+    assert.equal(testLogin.length > 0, true);
+    const ws = await request(app.port, 'GET', '/api/workspace', {cookie: admin});
+    assert.equal(ws.status, 200);
+    assert.deepEqual(ws.json.state.users.map(user => user.login).sort(), ['admin', 'test']);
+    assert.equal(ws.json.state.projects.some(item => item.id === 'kept-project'), true);
+    assert.equal(ws.json.state.clients.some(item => item.id === 'kept-client'), true);
+
+    const stale = structuredClone(ws.json.state);
+    const staleTest = stale.users.find(user => user.id === 'test');
+    staleTest.login = 'admin';
+    staleTest.role = 'leader';
+    staleTest.name = 'Тестовый руководитель';
+    const keptRole = await request(app.port, 'PUT', '/api/workspace', {cookie: admin, headers: browser, body: {revision: ws.json.revision, state: stale}});
+    assert.equal(keptRole.status, 200, JSON.stringify(keptRole.json));
+    const healedTest = keptRole.json.state.users.find(user => user.id === 'test');
+    assert.equal(healedTest.login, 'test');
+    assert.equal(healedTest.role, 'leader');
+    assert.equal(healedTest.name, 'Тестовый руководитель');
+
+    const fresh = await request(app.port, 'GET', '/api/workspace', {cookie: admin});
+    const people = [
+      {id: 'u-maria', name: 'Мария', login: 'maria', password: 'maria-pass-1', role: 'leader'},
+      {id: 'u-pavel', name: 'Павел', login: 'Pavel', password: 'pavel-pass-1', role: 'dev_head'},
+      {id: 'u-anna', name: 'Анна', login: 'anna', password: 'anna-pass-1', role: 'developer'},
+    ];
+    const draft = structuredClone(fresh.json.state);
+    for (const person of people) draft.users.push({...person, active: true, permissionOverrides: {}});
+    const created = await request(app.port, 'PUT', '/api/workspace', {cookie: admin, headers: browser, body: {revision: fresh.json.revision, state: draft}});
+    assert.equal(created.status, 200, JSON.stringify(created.json));
+    assert.deepEqual(created.json.state.users.map(user => user.login).sort(), ['admin', 'anna', 'maria', 'pavel', 'test']);
+
+    const renamed = structuredClone(created.json.state);
+    renamed.users.find(user => user.id === 'u-maria').role = 'pm';
+    renamed.users.find(user => user.id === 'admin').name = 'Главный админ';
+    const saved = await request(app.port, 'PUT', '/api/workspace', {cookie: admin, headers: browser, body: {revision: created.json.revision, state: renamed}});
+    assert.equal(saved.status, 200, JSON.stringify(saved.json));
+    assert.equal(saved.json.state.users.find(user => user.id === 'u-maria').role, 'pm');
+    assert.equal(saved.json.state.users.find(user => user.id === 'admin').name, 'Главный админ');
+
+    const duplicate = await request(app.port, 'POST', '/api/users', {
+      cookie: admin, headers: browser,
+      body: {name: 'Ещё Мария', login: 'Maria', password: 'maria-pass-2', role: 'sales'},
+    });
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.json.error, 'Такой логин уже занят');
+    const duplicateTest = await request(app.port, 'POST', '/api/users', {
+      cookie: admin, headers: browser,
+      body: {name: 'Второй тест', login: 'TEST', password: 'test-pass-2', role: 'developer'},
+    });
+    assert.equal(duplicateTest.status, 409);
+
+    await app.close();
+    app = await start(boot);
+    const again = await login(app.port, 'admin', 'admin-pass-1');
+    const after = await request(app.port, 'GET', '/api/workspace', {cookie: again});
+    assert.equal(after.json.state.users.find(user => user.id === 'u-maria').role, 'pm');
+    assert.equal(after.json.state.users.find(user => user.id === 'u-pavel').role, 'dev_head');
+    assert.equal(after.json.state.users.find(user => user.id === 'u-anna').role, 'developer');
+    assert.equal(after.json.state.users.find(user => user.id === 'admin').name, 'Главный админ');
+    assert.equal(after.json.state.users.find(user => user.id === 'test').login, 'test');
+    assert.equal(after.json.state.projects.find(item => item.id === 'kept-project').title, 'Существующий проект');
+    assert.equal(after.json.state.clients.find(item => item.id === 'kept-client').name, 'Старый клиент');
+    const maria = await login(app.port, 'maria', 'maria-pass-1');
+    const me = await request(app.port, 'GET', '/api/auth/me', {cookie: maria});
+    assert.equal(me.json.user.login, 'maria');
+    assert.equal(me.json.user.role, 'pm');
   } finally {
     await app.close();
     fs.rmSync(dir, {recursive: true, force: true});
