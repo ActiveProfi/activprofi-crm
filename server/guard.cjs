@@ -1,4 +1,4 @@
-const {M, Access, Leads, Communications, Inbox} = require('./models.cjs');
+const {M, Access, Leads, Communications, Inbox, Delivery} = require('./models.cjs');
 const {contactKeys, assertContactShape} = require('./contacts.cjs');
 const {HttpError, domainError} = require('./errors.cjs');
 const store = require('./store.cjs');
@@ -43,6 +43,7 @@ function upgradeInPlace(state) {
   Leads.upgrade(state);
   Communications.upgrade(state);
   Inbox.upgrade(state);
+  Delivery.upgrade(state);
   return JSON.stringify(state) !== before;
 }
 
@@ -225,6 +226,7 @@ function applyProjects(state, user, presented, incoming) {
         id,
         leaderId,
         members,
+        devStage: Delivery.stageById(project.devStage) ? project.devStage : 'dev-start',
         budget: M.has(state, user, 'finance.view') ? Number(project.budget) || 0 : 0,
         recipients: project.recipients || [],
         board: project.board || {notes: [], links: [], comments: []},
@@ -246,6 +248,9 @@ function applyProjects(state, user, presented, incoming) {
     for (const key of [...shell, ...keys.filter(key => ['board', 'mockup', 'sheets', 'recipients'].includes(key))]) {
       if (key === 'budget' && !M.has(state, user, 'finance.view')) continue;
       current[key] = project[key];
+    }
+    if (keys.includes('devStage') && project.devStage !== current.devStage) {
+      runDomain(() => Delivery.moveProject(state, user, id, project.devStage));
     }
   }
 }
@@ -293,6 +298,7 @@ function applyClients(state, user, presented, incoming) {
       assertContactShape(created);
       rememberClient(index, created);
       state.clients.push(created);
+      Delivery.ensureFromWon(state, created, user.id);
       continue;
     }
     if (same(before, client)) continue;
@@ -310,7 +316,12 @@ function applyClients(state, user, presented, incoming) {
     assertContactShape(nextClient);
     forgetClient(index, current);
     rememberClient(index, nextClient);
+    const previousProject = current.project;
     Object.assign(current, nextClient);
+    if ((!current.project || !state.projects.some(item => item.id === current.project)) && previousProject && state.projects.some(item => item.id === previousProject)) {
+      current.project = previousProject;
+    }
+    Delivery.ensureFromWon(state, current, user.id);
   }
 }
 

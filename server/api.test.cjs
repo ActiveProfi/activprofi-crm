@@ -383,6 +383,82 @@ test('admin export and import keeps passwords and synthetic scope', async () => 
     assert.ok(tables.includes('integration_api_keys'));
     assert.ok(tables.includes('mailings'));
     assert.ok(tables.includes('contact_keys'));
+    const migrations = app.db.all('SELECT id FROM schema_migrations').map(row => row.id);
+    assert.ok(migrations.includes('003-proposal-stage'));
+  } finally {
+    await app.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('integration key can place a deal on Отправлено КП and returns its id', async () => {
+  const {app, dir} = await listen();
+  try {
+    const admin = await login(app.port, 'admin', 'admin-pass-1');
+    const key = await request(app.port, 'POST', '/api/integration-keys', {
+      cookie: admin,
+      headers: {'X-Requested-With': 'ActivProfi'},
+      body: {name: 'Колл-центр'},
+    });
+    const payload = {
+      pipelineId: 'inbound',
+      stage: 'Отправлено КП',
+      leads: [{
+        name: 'Ирина Колл',
+        description: 'Сеть кофеен, нужен учёт заявок',
+        email: 'irina-call@example.test',
+        phone: '+7 999 555-01-99',
+        source: 'колл-центр',
+        date: '2026-11-18',
+        clientTask: 'Автоматизировать приём заявок с сайта',
+        kpVariants: 'Базовый 90 000 ₽ / 3 недели; Расширенный 160 000 ₽ / 6 недель',
+        kpLink: 'https://kp.example.test/maya',
+        callAt: '2026-11-20T15:00',
+        statusNote: 'ждём решения',
+        comment: 'Просили смету на два варианта',
+      }],
+    };
+    const created = await request(app.port, 'POST', '/api/integrations/leads', {
+      body: payload,
+      headers: {Authorization: 'Bearer ' + key.json.key},
+    });
+    assert.equal(created.status, 200, JSON.stringify(created.json));
+    assert.equal(created.json.created, 1);
+    assert.ok(created.json.id);
+    assert.deepEqual(created.json.ids, [created.json.id]);
+    const seen = await request(app.port, 'GET', '/api/clients/' + created.json.id, {cookie: admin});
+    assert.equal(seen.status, 200);
+    const deal = seen.json.client;
+    assert.equal(deal.stage, 'Отправлено КП');
+    assert.equal(deal.inLeadBase, false);
+    assert.equal(deal.source, 'колл-центр');
+    assert.equal(deal.email, 'irina-call@example.test');
+    assert.equal(deal.description, 'Сеть кофеен, нужен учёт заявок');
+    assert.equal(deal.clientTask, 'Автоматизировать приём заявок с сайта');
+    assert.match(deal.kpVariants, /90 000/);
+    assert.equal(deal.kpLink, 'https://kp.example.test/maya');
+    assert.equal(deal.callAt, '2026-11-20T15:00');
+    assert.equal(deal.statusNote, 'ждём решения');
+    assert.equal(deal.dealDate, '2026-11-18');
+    assert.match(deal.sourceComment, /два варианта/);
+    const before = (await request(app.port, 'GET', '/api/clients', {cookie: admin})).json.clients.find(client => client.id === '1');
+    const duplicate = await request(app.port, 'POST', '/api/integrations/leads', {
+      body: payload,
+      headers: {'X-API-Key': key.json.key},
+    });
+    assert.equal(duplicate.status, 200);
+    assert.equal(duplicate.json.created, 0);
+    assert.equal(duplicate.json.deals[0].status, 'duplicate');
+    assert.equal(duplicate.json.deals[0].id, created.json.id);
+    const after = (await request(app.port, 'GET', '/api/clients', {cookie: admin})).json.clients.find(client => client.id === '1');
+    assert.equal(after.stageId, before.stageId);
+    const missing = await request(app.port, 'POST', '/api/integrations/leads', {
+      body: {pipelineId: 'inbound', stage: 'Нет такого этапа', leads: [{name: 'Пустой этап', phone: '+7 999 555-01-98'}]},
+      headers: {'X-API-Key': key.json.key},
+    });
+    assert.equal(missing.status, 400);
+    const oleg = await login(app.port, 'oleg', 'demo-pass-1');
+    assert.equal((await request(app.port, 'GET', '/api/clients/' + created.json.id, {cookie: oleg})).status, 404);
   } finally {
     await app.close();
     fs.rmSync(dir, {recursive: true, force: true});

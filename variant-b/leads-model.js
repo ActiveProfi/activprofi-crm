@@ -35,7 +35,56 @@ function upgrade(s){s.leadBatches??=[];if(!s.leadsVersion){s.users.push({id:'rop
   s.manualFunnelVersion=1;
  }
  for(const c of s.clients){if(!String(c.sourceComment||'').trim()){const text=deriveSourceComment(c);if(text)c.sourceComment=text}}
+ for(const pipeline of s.pipelines||[])ensureProposalStage(pipeline);
  return s}
+// Этап «Отправлено КП» стоит перед успешной сделкой. Уже лежащие карточки не переносятся.
+function ensureProposalStage(pipeline){
+ if(!pipeline?.stages?.length)return false;
+ if(pipeline.stages.some(stage=>stage.systemKey==='proposal_sent'||norm(stage.name)==='отправлено кп'))return false;
+ let id='kp-'+pipeline.id;
+ if(pipeline.stages.some(stage=>stage.id===id))id='kp-sent-'+pipeline.id;
+ const stage={id,name:'Отправлено КП',kind:'open',systemKey:'proposal_sent'};
+ const won=pipeline.stages.findIndex(item=>item.kind==='won');
+ const lost=pipeline.stages.findIndex(item=>item.kind==='lost');
+ pipeline.stages.splice(won>=0?won:(lost>=0?lost:pipeline.stages.length),0,stage);
+ return true;
+}
+function findStage(pipeline,token){
+ const text=norm(token);
+ if(!text)return null;
+ return pipeline.stages.find(stage=>stage.id===token||stage.systemKey===token||norm(stage.name)===text)||null;
+}
+function acceptIntegrationDeals(state,records,opts){
+ const pipeline=state.pipelines.find(item=>item.id===opts.pipelineId);
+ if(!pipeline)throw Error('Воронка не найдена');
+ const headers=['name','company','phone','email','vk','telegram','source','notes'];
+ const map=['name','company','phone','email','vk','telegram','source','notes'];
+ const rows=[],accepted=[];
+ for(const record of records){
+  if(record.kpLink&&!/^https?:\/\/\S+$/i.test(record.kpLink))throw Error('Ссылка на КП должна начинаться с http:// или https://');
+  const token=record.stageId||record.stage||record.stageName||opts.stageId||opts.stage||opts.stageName||'';
+  const stage=findStage(pipeline,token);
+  if(!stage)throw Error('Этап не найден: '+(token||'не указан'));
+  rows.push([record.name||'',record.company||record.description||'',record.phone||'',record.email||'',record.vk||'',record.telegram||'',record.source||opts.source||'Интеграция',record.comment||'']);
+  accepted.push({record,stage});
+ }
+ const previewRows=preview(state,headers,rows,map,{name:opts.name||'Интеграция',pipelineId:pipeline.id,stageId:accepted[0].stage.id,destination:'funnel',kind:'called',source:opts.source||'Интеграция',headerRow:0});
+ const deals=[];
+ previewRows.forEach((row,index)=>{
+  const {record,stage}=accepted[index];
+  if(row.status!=='ready'){
+   const links=String(row.data.socials||'').split('\n').filter(Boolean);
+   const existing=state.clients.find(client=>(row.data.phone&&phone(client.phone)===phone(row.data.phone))||(row.data.email&&norm(client.email)===norm(row.data.email))||(links.length&&(()=>{try{return socialLinks(client).some(link=>links.includes(link))}catch{return false}})()));
+   deals.push({id:existing?.id||'',name:record.name||row.data.name||'',status:row.status,reason:row.reason||''});
+   return;
+  }
+  const comment=String(record.comment||'').trim();
+  const client={...row.data,id:M.uid(),pipelineId:pipeline.id,stageId:stage.id,stage:stage.name,inLeadBase:false,ownerId:'',batchId:'',project:'',createdAt:M.today(),dealDate:record.date||record.dealDate||M.today(),description:record.description||'',company:row.data.company||record.description||'',clientTask:record.clientTask||'',kpVariants:record.kpVariants||'',kpLink:record.kpLink||'',callAt:record.callAt||'',statusNote:record.statusNote||'',when:record.callAt||'',next:record.statusNote||'Связаться с клиентом',source:record.source||opts.source||'Интеграция',sourceComment:comment,notes:comment?[comment,...(row.data.notes||[]).filter(note=>note!==comment)]:(row.data.notes||[]),stageHistory:[{at:M.today(),stageId:stage.id,reason:'Создано по API'}]};
+  state.clients.push(client);
+  deals.push({id:client.id,name:client.name,status:'created'});
+ });
+ return deals;
+}
 function migrateCold(s){
  if(s.coldStageVersion===2)return;
  const pending=s.clients.filter(c=>{const batch=s.leadBatches.find(b=>b.id===c.batchId),t=M.stage(s,c);return c.batchId&&(c.baseKind==='cold'||batch?.kind==='cold')&&t?.kind==='open'&&(c.stageHistory||[]).length<=1&&['новый','база клиентов','холод'].includes(norm(t.name))});
@@ -258,5 +307,5 @@ function groupExisting(s,u,batchId,choices,fileDate){
  }
  batch.groupedInto=groups.map(b=>b.id);s.leadBatches.push(...groups);return groups;
 }
-const api={batchCandidates,batchProgress,archiveBatch,restoreBatch,promoteBatch,promote,groupExisting,commentGroups,classifyComment,importComment,groupedCommit,manualStage,migrateCold,ensureColdStage,ingestIntegration,socialLinks,socialFields,categories,fields,isSales,canImport,upgrade,mapping,preview,commit,distribution,distribute,phone,isCommentHeader,sourceCommentFrom,excelValue,excelNote,sheetBounds,withCellNotes,deriveSourceComment};if(typeof module!=='undefined')module.exports=api;root.LeadModel=api;
+const api={batchCandidates,batchProgress,archiveBatch,restoreBatch,promoteBatch,promote,groupExisting,commentGroups,classifyComment,importComment,groupedCommit,manualStage,migrateCold,ensureColdStage,ensureProposalStage,acceptIntegrationDeals,ingestIntegration,socialLinks,socialFields,categories,fields,isSales,canImport,upgrade,mapping,preview,commit,distribution,distribute,phone,isCommentHeader,sourceCommentFrom,excelValue,excelNote,sheetBounds,withCellNotes,deriveSourceComment};if(typeof module!=='undefined')module.exports=api;root.LeadModel=api;
 })(globalThis);

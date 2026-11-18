@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS pipelines (
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   leader_id TEXT NOT NULL DEFAULT '',
+  dev_stage TEXT NOT NULL DEFAULT '',
   data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS project_members (
@@ -208,6 +209,15 @@ function migrate(db) {
   db.exec(SCHEMA);
   const done = db.get('SELECT id FROM schema_migrations WHERE id = ?', '001-initial');
   if (!done) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '001-initial', new Date().toISOString());
+  // Старые базы созданы без колонки этапа разработки. Новые получают её сразу в SCHEMA.
+  const projectColumns = db.all('PRAGMA table_info(projects)').map(column => column.name);
+  if (!projectColumns.includes('dev_stage')) db.exec("ALTER TABLE projects ADD COLUMN dev_stage TEXT NOT NULL DEFAULT ''");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_dev_stage ON projects(dev_stage)');
+  const delivery = db.get('SELECT id FROM schema_migrations WHERE id = ?', '002-delivery-board');
+  if (!delivery) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '002-delivery-board', new Date().toISOString());
+  // Сам этап хранится в JSON воронки и добавляется в upgrade. Здесь только отметка, что миграция известна базе.
+  const proposal = db.get('SELECT id FROM schema_migrations WHERE id = ?', '003-proposal-stage');
+  if (!proposal) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '003-proposal-stage', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};

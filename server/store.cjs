@@ -104,7 +104,7 @@ function save(db, state, options = {}) {
     db.run('INSERT INTO pipelines (id, name, position, data) VALUES (?, ?, ?, ?)', item.id, item.name || '', index, JSON.stringify(item));
   });
   for (const item of state.projects || []) {
-    db.run('INSERT INTO projects (id, leader_id, data) VALUES (?, ?, ?)', item.id, item.leaderId || '', JSON.stringify(item));
+    db.run('INSERT INTO projects (id, leader_id, dev_stage, data) VALUES (?, ?, ?, ?)', item.id, item.leaderId || '', item.devStage || '', JSON.stringify(item));
     for (const member of item.members || []) db.run('INSERT OR IGNORE INTO project_members (project_id, user_id) VALUES (?, ?)', item.id, member);
   }
   const seen = new Map();

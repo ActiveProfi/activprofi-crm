@@ -19,6 +19,7 @@ const DEMO_LOGINS = {
   lead2: 'svetlana',
   rop: 'irina',
   intern: 'nikita',
+  devhead: 'pavel',
 };
 
 function prototypeSeed() {
@@ -63,6 +64,7 @@ function ensureMinimal(state) {
       name: 'Входящие заявки',
       stages: [
         {id: 'stage-new', name: 'Новый', kind: 'open'},
+        {id: 'stage-kp', name: 'Отправлено КП', kind: 'open', systemKey: 'proposal_sent'},
         {id: 'stage-won', name: 'В проекте', kind: 'won'},
         {id: 'stage-lost', name: 'Отказ', kind: 'lost'},
       ],
@@ -109,6 +111,9 @@ function seedDemo(db, cfg) {
   const state = prototypeSeed();
   upgradeInPlace(state);
   ensureMinimal(state);
+  if (!state.users.some(user => user.role === 'dev_head')) {
+    state.users.push({id: 'devhead', name: 'Павел', role: 'dev_head', active: true});
+  }
   const adminLogin = String(cfg.adminLogin || 'admin').trim().toLowerCase();
   const passwords = {};
   for (const user of state.users) {
