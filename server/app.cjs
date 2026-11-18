@@ -11,6 +11,9 @@ const {workspacePayload, mergeWorkspace} = require('./guard.cjs');
 const {M} = require('./models.cjs');
 const service = require('./service.cjs');
 const {ensureBoot} = require('./bootstrap.cjs');
+const {createTelegram} = require('./telegram.cjs');
+
+const telegramByDb = new WeakMap();
 
 const root = path.join(__dirname, '..', 'variant-b');
 const types = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon'};
@@ -408,6 +411,56 @@ async function route(req, res, db, cfg) {
     return send(res, 200, service.importDump(db, session.user, await readJson(req, 48 * 1024 * 1024)));
   }
 
+  if (pathname.startsWith('/api/telegram')) {
+    const session = requireUser(db, req);
+    const bot = telegramByDb.get(db);
+    if (!bot) throw new HttpError(500, 'Telegram не запущен');
+    if (pathname === '/api/telegram/files' || pathname.startsWith('/api/telegram/files/')) {
+      const id = decodeURIComponent(pathname.slice('/api/telegram/files/'.length));
+      const file = await bot.file(session.user, id);
+      const name = String(file.name || 'file').replace(/[\r\n"]/g, '_');
+      res.writeHead(200, {'Content-Type': file.mime || 'application/octet-stream', 'Content-Length': file.bytes.length, 'Content-Disposition': 'attachment; filename="' + name + '"', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'});
+      res.end(file.bytes);
+      return;
+    }
+    if (pathname === '/api/telegram/badge' && method === 'GET') return send(res, 200, {unread: bot.status(session.user).unread});
+    if (pathname === '/api/telegram' && method === 'GET') return send(res, 200, bot.overview(session.user));
+    if (pathname === '/api/telegram/token' && method === 'POST') {
+      const body = await readJson(req, 16 * 1024);
+      return send(res, 200, bot.setToken(session.user, body.token));
+    }
+    if (pathname === '/api/telegram/token' && method === 'DELETE') return send(res, 200, bot.setToken(session.user, ''));
+    if (pathname === '/api/telegram/link' && method === 'POST') {
+      const body = await readJson(req, 16 * 1024);
+      return send(res, 200, {chats: bot.linkChat(session.user, body.chatId, body.scope, body.projectId)});
+    }
+    if (pathname === '/api/telegram/unlink' && method === 'POST') {
+      const body = await readJson(req, 16 * 1024);
+      return send(res, 200, {chats: bot.unlinkChat(session.user, body.chatId)});
+    }
+    if (pathname === '/api/telegram/messages' && method === 'GET') return send(res, 200, {messages: bot.messages(session.user, url.searchParams.get('chatId'))});
+    if (pathname === '/api/telegram/messages' && method === 'POST') {
+      const body = await readJson(req, 32 * 1024);
+      return send(res, 200, {messages: await bot.send(session.user, body.chatId, body.text)});
+    }
+    if (pathname === '/api/telegram/read' && method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      return send(res, 200, bot.markRead(session.user, body.chatId));
+    }
+    if (pathname === '/api/telegram/mock' && method === 'POST') {
+      if (!bot.memory) throw new HttpError(404, 'Не найдено');
+      if (session.user.role !== 'admin') throw new HttpError(403, 'Только администратор');
+      const body = await readJson(req, 64 * 1024);
+      bot.applyUpdate(body.update || body);
+      return send(res, 200, {ok: true});
+    }
+    if (pathname === '/api/telegram/mock-sent' && method === 'GET') {
+      if (!bot.memory) throw new HttpError(404, 'Не найдено');
+      if (session.user.role !== 'admin') throw new HttpError(403, 'Только администратор');
+      return send(res, 200, {sent: bot.memory.sent});
+    }
+  }
+
   if (method === 'GET' || method === 'HEAD') {
     const file = staticPath(pathname);
     if (!file) {
@@ -437,6 +490,10 @@ function start(overrides = {}) {
   const db = openDatabase(cfg.databasePath);
   migrate(db);
   ensureBoot(db, cfg);
+  const telegram = createTelegram({db, M, store, fetchImpl: globalThis.fetch, envToken: cfg.telegramBotToken || '', mock: cfg.telegramMock === true || cfg.telegramMock === '1'});
+  telegramByDb.set(db, telegram);
+  if (cfg.telegramMockSeed === true || cfg.telegramMockSeed === '1') telegram.seedDemo();
+  if (cfg.telegramPoll !== false) telegram.start();
   const server = http.createServer((req, res) => handler(db, cfg, req, res));
   server.requestTimeout = 0;
   return new Promise((resolve, reject) => {
@@ -444,9 +501,10 @@ function start(overrides = {}) {
     server.listen(cfg.port, cfg.host, () => {
       const port = server.address().port;
       resolve({
-        server, db, cfg: {...cfg, port}, port,
+        server, db, cfg: {...cfg, port}, port, telegram,
         url: `http://${cfg.host}:${port}`,
         close() {
+          telegram.stop();
           return new Promise((done, fail) => server.close(error => error ? fail(error) : done())).finally(() => db.close());
         },
       });

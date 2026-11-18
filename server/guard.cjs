@@ -180,6 +180,12 @@ function applyUsers(state, actor, presented, incoming, secrets) {
         if (secrets.passwords[change.user.id].length < 8) throw new HttpError(400, 'Пароль — не короче 8 символов');
         secrets.accepted[change.user.id] = secrets.passwords[change.user.id];
       }
+      if (Object.prototype.hasOwnProperty.call(change.user, 'telegram')) {
+        const raw = String(change.user.telegram || '').trim().replace(/^@/, '');
+        if (raw && !/^([A-Za-z][A-Za-z0-9_]{4,31}|\d{3,20})$/.test(raw)) throw new HttpError(400, 'Telegram: username от 5 символов или числовой id');
+        const savedUser = state.users.find(item => item.id === change.user.id);
+        if (savedUser) savedUser.telegram = raw;
+      }
     }
   }
 }
