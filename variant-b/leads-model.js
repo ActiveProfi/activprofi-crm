@@ -34,13 +34,133 @@ function upgrade(s){s.leadBatches??=[];if(!s.leadsVersion){s.users.push({id:'rop
   for(const c of s.clients){const b=s.leadBatches.find(b=>b.id===c.batchId),last=c.stageHistory?.at(-1);if(b?.group&&!c.inLeadBase&&!c.processedAt&&['Ждут КП','Ждут звонка','Прислать КП','Перезвонить'].includes(M.stage(s,c)?.name)&&(last?.reason?.startsWith('Распределение по комментариям:')||c.stageHistory?.length===1)){c.inLeadBase=true;c.stageId='';c.stage='';c.stageHistory.push({at:M.today(),stageId:'',reason:'Возврат в базу: воронка только после отработки'});b.baseOnly=true}}
   s.manualFunnelVersion=1;
  }
+ for(const c of s.clients){if(!String(c.sourceComment||'').trim()){const text=deriveSourceComment(c);if(text)c.sourceComment=text}}
+ for(const pipeline of s.pipelines||[])ensureProposalStage(pipeline);
  return s}
+// Этап «Отправлено КП» стоит перед успешной сделкой. Уже лежащие карточки не переносятся.
+function ensureProposalStage(pipeline){
+ if(!pipeline?.stages?.length)return false;
+ if(pipeline.stages.some(stage=>stage.systemKey==='proposal_sent'||norm(stage.name)==='отправлено кп'))return false;
+ let id='kp-'+pipeline.id;
+ if(pipeline.stages.some(stage=>stage.id===id))id='kp-sent-'+pipeline.id;
+ const stage={id,name:'Отправлено КП',kind:'open',systemKey:'proposal_sent'};
+ const won=pipeline.stages.findIndex(item=>item.kind==='won');
+ const lost=pipeline.stages.findIndex(item=>item.kind==='lost');
+ pipeline.stages.splice(won>=0?won:(lost>=0?lost:pipeline.stages.length),0,stage);
+ return true;
+}
+function findStage(pipeline,token){
+ const text=norm(token);
+ if(!text)return null;
+ return pipeline.stages.find(stage=>stage.id===token||stage.systemKey===token||norm(stage.name)===text)||null;
+}
+function acceptIntegrationDeals(state,records,opts){
+ const pipeline=state.pipelines.find(item=>item.id===opts.pipelineId);
+ if(!pipeline)throw Error('Воронка не найдена');
+ const headers=['name','company','phone','email','vk','telegram','source','notes'];
+ const map=['name','company','phone','email','vk','telegram','source','notes'];
+ const rows=[],accepted=[];
+ for(const record of records){
+  if(record.kpLink&&!/^https?:\/\/\S+$/i.test(record.kpLink))throw Error('Ссылка на КП должна начинаться с http:// или https://');
+  const token=record.stageId||record.stage||record.stageName||opts.stageId||opts.stage||opts.stageName||'';
+  const stage=findStage(pipeline,token);
+  if(!stage)throw Error('Этап не найден: '+(token||'не указан'));
+  rows.push([record.name||'',record.company||record.description||'',record.phone||'',record.email||'',record.vk||'',record.telegram||'',record.source||opts.source||'Интеграция',record.comment||'']);
+  accepted.push({record,stage});
+ }
+ const previewRows=preview(state,headers,rows,map,{name:opts.name||'Интеграция',pipelineId:pipeline.id,stageId:accepted[0].stage.id,destination:'funnel',kind:'called',source:opts.source||'Интеграция',headerRow:0});
+ const deals=[];
+ previewRows.forEach((row,index)=>{
+  const {record,stage}=accepted[index];
+  if(row.status!=='ready'){
+   const links=String(row.data.socials||'').split('\n').filter(Boolean);
+   const existing=state.clients.find(client=>(row.data.phone&&phone(client.phone)===phone(row.data.phone))||(row.data.email&&norm(client.email)===norm(row.data.email))||(links.length&&(()=>{try{return socialLinks(client).some(link=>links.includes(link))}catch{return false}})()));
+   deals.push({id:existing?.id||'',name:record.name||row.data.name||'',status:row.status,reason:row.reason||''});
+   return;
+  }
+  const comment=String(record.comment||'').trim();
+  const client={...row.data,id:M.uid(),pipelineId:pipeline.id,stageId:stage.id,stage:stage.name,inLeadBase:false,ownerId:'',batchId:'',project:'',createdAt:M.today(),dealDate:record.date||record.dealDate||M.today(),description:record.description||'',company:row.data.company||record.description||'',clientTask:record.clientTask||'',kpVariants:record.kpVariants||'',kpLink:record.kpLink||'',callAt:record.callAt||'',statusNote:record.statusNote||'',when:record.callAt||'',next:record.statusNote||'Связаться с клиентом',source:record.source||opts.source||'Интеграция',sourceComment:comment,notes:comment?[comment,...(row.data.notes||[]).filter(note=>note!==comment)]:(row.data.notes||[]),stageHistory:[{at:M.today(),stageId:stage.id,reason:'Создано по API'}]};
+  state.clients.push(client);
+  deals.push({id:client.id,name:client.name,status:'created'});
+ });
+ return deals;
+}
 function migrateCold(s){
  if(s.coldStageVersion===2)return;
  const pending=s.clients.filter(c=>{const batch=s.leadBatches.find(b=>b.id===c.batchId),t=M.stage(s,c);return c.batchId&&(c.baseKind==='cold'||batch?.kind==='cold')&&t?.kind==='open'&&(c.stageHistory||[]).length<=1&&['новый','база клиентов','холод'].includes(norm(t.name))});
  for(const c of pending){const t=ensureColdStage(s,c.pipelineId);if(c.stageId!==t.id){c.stageHistory??=[];c.stageHistory.push({at:M.today(),stageId:t.id,reason:'Перенос импортированной холодной базы'})}c.stageId=t.id;c.stage=t.name}
  for(const p of s.pipelines){const t=p.stages.find(t=>t.systemKey==='cold');if(t){t.name='ХОЛОД';for(const c of s.clients.filter(c=>c.stageId===t.id))c.stage=t.name}}
  s.coldStageVersion=2;
+}
+function isCommentHeader(header){
+ const title=norm(header).replace(/ё/g,'е');
+ if(!title||/аудио|запись|пост|публикаци/.test(title))return false;
+ // \w не включает кириллицу, поэтому русские заголовки ищем по основе слова.
+ return /коммент|примеч|заметк|результат\s+звон|итог\s+(?:звон|обзвон|разговор)|(?:^|[^a-z])(?:notes?|comments?|remarks?)(?:$|[^a-z])/.test(title);
+}
+function sourceCommentFrom(headers,row,map){
+ const parts=[];(row||[]).forEach((v,i)=>{const text=String(v??'').trim();if(!text)return;if((map&&map[i]==='notes')||isCommentHeader(headers?.[i]))parts.push(text)});
+ return [...new Set(parts)].join('\n');
+}
+// Текст ячейки Excel: формула, rich text и подпись ссылки не должны превращаться в пустую строку.
+function excelValue(value){
+ if(value==null)return '';
+ if(value instanceof Date)return value.toISOString().slice(0,10);
+ if(typeof value!=='object')return String(value);
+ if(Array.isArray(value.richText))return value.richText.map(part=>part?.text||'').join('');
+ if(value.text&&typeof value.text==='object')return excelValue(value.text);
+ if(value.result!=null&&typeof value.result!=='object')return String(value.result);
+ if(value.result&&typeof value.result==='object')return excelValue(value.result);
+ if(typeof value.text==='string')return value.text;
+ if(value.hyperlink)return String(value.hyperlink);
+ return '';
+}
+function excelNote(note){
+ if(!note)return '';
+ if(typeof note==='string')return note.trim();
+ if(Array.isArray(note.texts))return note.texts.map(part=>part?.text||'').join('').trim();
+ if(typeof note.text==='string')return note.text.trim();
+ return '';
+}
+function sheetBounds(sheet){
+ let rows=Math.max(sheet?.rowCount||0,sheet?.actualRowCount||0),cols=Math.max(sheet?.columnCount||0,sheet?.actualColumnCount||0);
+ if(typeof sheet?.eachRow==='function')sheet.eachRow({includeEmpty:true},row=>{rows=Math.max(rows,row.number||0);cols=Math.max(cols,row.cellCount||0,row.actualCellCount||0);if(typeof row.eachCell==='function')row.eachCell({includeEmpty:false},cell=>{cols=Math.max(cols,cell.col||0)})});
+ return {rows,cols};
+}
+function withCellNotes(headers,dataRows,notes){
+ if(!notes?.some(v=>String(v||'').trim()))return {headers,rows:dataRows};
+ return {headers:[...headers,'Комментарий ячейки'],rows:dataRows.map((row,i)=>[...row,String(notes[i]||'').trim()])};
+}
+function nowStamp(){
+ const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Vladivostok',hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(new Date());
+ const g=type=>parts.find(part=>part.type===type).value;
+ let hour=g('hour');if(hour==='24')hour='00';
+ return `${g('year')}-${g('month')}-${g('day')}T${hour}:${g('minute')}:${g('second')}+10:00`;
+}
+function deriveSourceComment(c){
+ if(String(c?.sourceComment||'').trim())return String(c.sourceComment).trim();
+ const lines=(c?.notes||[]).map(n=>String(n||'').trim()).filter(Boolean);
+ const labeled=lines.map(line=>{const m=line.match(/^([^:]{1,80}):\s*([\s\S]+)$/);return m&&isCommentHeader(m[1])?m[2].trim():''}).filter(Boolean);
+ if(labeled.length)return [...new Set(labeled)].join('\n');
+ if(c?.batchId&&lines.length){const first=lines[0];if(!/^[^:]{1,80}:\s/.test(first))return first}
+ return '';
+}
+function attachSourceComment(c){
+ const text=deriveSourceComment(c);if(!text)return;
+ c.sourceComment=text;c.notes??=[];
+ const blob=c.notes.join('\n'),parts=text.split('\n').map(x=>x.trim()).filter(Boolean);
+ if(blob.includes(text)||parts.every(part=>blob.includes(part)))return;
+ c.notes.unshift('Комментарий из базы: '+text);
+}
+function batchProgress(s,batchId){
+ const clients=s.clients.filter(c=>c.batchId===batchId),sent=clients.filter(c=>!c.inLeadBase).length;
+ return {total:clients.length,sent,left:clients.length-sent};
+}
+function canTouchBatch(s,u,b){
+ if(!b||b.groupedInto)return false;
+ if(canImport(u,s))return true;
+ if(!M.has(s,u,'clients.edit'))return false;
+ return s.clients.some(c=>c.batchId===b.id&&M.canClient(s,u,c));
 }
 function mapping(headers,rows){
  let used=new Set();return headers.map((h,i)=>{
@@ -51,6 +171,7 @@ function mapping(headers,rows){
   // "Профиль" can mean a campaign/search profile, not a person's URL.
   if(k==='socials'&&samples.length&&!samples.some(isProfile))k='';
   if(!k&&samples.length&&samples.every(isProfile)&&!/источник|source/.test(title))k='socials';
+  if(!k&&isCommentHeader(h)&&!used.has('notes'))k='notes';
   if(k)used.add(k);return k||'';
  });
 }
@@ -89,7 +210,8 @@ function preview(s,headers,rows,map,opts){
   if(!stage)errors.push('Этап не найден: '+data.stage+'. Выберите для этой колонки «Сохранить в заметках» или исправьте этап');
   const duplicate=data.phones.some(v=>phones.has(phone(v)))||data.emails.some(v=>emails.has(norm(v)))||links.some(x=>profiles.has(x));
   const status=errors.length?'error':duplicate?'duplicate':'ready';if(status==='ready'){data.phones.forEach(v=>phones.add(phone(v)));data.emails.forEach(v=>emails.add(norm(v)));links.forEach(x=>profiles.add(x))}
-  return {row:i+(opts.headerRow||1)+1,status,warning,reason:errors.join('; ')||(duplicate?'Контакт уже в CRM / выше в файле (телефон, email или профиль)':''),data:{...data,name:data.name||data.company||data.phone||data.email||links[0],company:data.company||'',amount:+amount||0,source:data.source||opts.source||opts.name,stageId:stage?.id,notes:[data.notes,...extra].filter(Boolean)}};
+  const sourceComment=sourceCommentFrom(headers,row,map);
+  return {row:i+(opts.headerRow||1)+1,status,warning,reason:errors.join('; ')||(duplicate?'Контакт уже в CRM / выше в файле (телефон, email или профиль)':''),data:{...data,name:data.name||data.company||data.phone||data.email||links[0],company:data.company||'',amount:+amount||0,source:data.source||opts.source||opts.name,stageId:stage?.id,notes:[data.notes,...extra].filter(Boolean),sourceComment}};
  });
 }
 function manualStage(s,pipelineId){const p=s.pipelines.find(p=>p.id===pipelineId);if(!p)throw Error('Воронка не найдена');let t=p.stages.find(t=>norm(t.name)==='новый'&&t.kind==='open'&&t.systemKey!=='cold');if(!t){t={id:M.uid(),name:'Новый',kind:'open'};p.stages.splice(p.stages[0]?.systemKey==='cold'?1:0,0,t)}return t}
@@ -119,7 +241,7 @@ function classifyComment(value){
  if(hits.includes('refused')&&hits.every(k=>['refused','irrelevant'].includes(k)))return 'refused';
  return hits.length===1?hits[0]:'review';
 }
-function importComment(headers,row,map){return row.map((v,i)=>map[i]==='notes'||/коммент|примечан|результат звонка|итог.*(?:звон|обзвон)/i.test(headers[i])?String(v||'').trim():'').filter(Boolean).join('\n')}
+function importComment(headers,row,map){return sourceCommentFrom(headers,row,map)}
 function groupedCommit(s,u,headers,rows,map,opts,choices){
  if(!canImport(u,s))throw Error('Нет доступа к импорту');
  const checked=preview(s,headers,rows,map,opts),ready=checked.filter(r=>r.status==='ready');
@@ -144,14 +266,28 @@ function promoteBatch(s,u,batchId,pipelineId,stageId){
  const b=s.leadBatches.find(b=>b.id===batchId);if(!b||b.groupedInto)throw Error('База не найдена');
  const clients=batchCandidates(s,u,batchId);if(!clients.length)throw Error('Все доступные контакты этой базы уже в воронке');
  const result=promote(s,u,clients.map(c=>c.id),pipelineId,stageId);
- b.funnelLoads??=[];b.funnelLoads.push({at:M.today(),by:u.id,pipelineId,stageId,count:result.length});return result;
+ const at=nowStamp(),progress=batchProgress(s,batchId);
+ b.funnelLoads??=[];b.funnelLoads.push({at,by:u.id,pipelineId,stageId,count:result.length});
+ b.lastFunnelAt=at;b.funnelSent=progress.sent;b.funnelTotal=progress.total;
+ if(progress.total>0&&progress.left===0){b.archived=true;b.archivedAt=at}
+ return result;
+}
+function archiveBatch(s,u,batchId){
+ const b=s.leadBatches.find(x=>x.id===batchId);if(!canTouchBatch(s,u,b))throw Error('База не найдена или недоступна');
+ const progress=batchProgress(s,batchId);if(!progress.total||progress.left)throw Error('В архив уходит база, только когда в воронку перенесены все её контакты');
+ b.archived=true;b.archivedAt=b.archivedAt||b.lastFunnelAt||nowStamp();b.funnelSent=progress.sent;b.funnelTotal=progress.total;return b;
+}
+function restoreBatch(s,u,batchId){
+ const b=s.leadBatches.find(x=>x.id===batchId);if(!canTouchBatch(s,u,b))throw Error('База не найдена или недоступна');
+ if(!b.archived)throw Error('База не в архиве');
+ b.archived=false;b.restoredAt=nowStamp();return b;
 }
 function promote(s,u,ids,pipelineId,stageId){
  if(!M.has(s,u,'clients.edit')||!ids.length)throw Error('Выберите доступные контакты');
  if(!s.pipelines.find(p=>p.id===pipelineId)?.stages.some(t=>t.id===stageId))throw Error('Выберите этап воронки');
  const clients=[...new Set(ids)].map(id=>s.clients.find(c=>c.id===id));
  if(clients.some(c=>!c||!c.inLeadBase||!M.canClient(s,u,c)))throw Error('Контакт недоступен или уже находится в воронке');
- for(const c of clients){M.moveClient(s,u,c.id,pipelineId,stageId);c.processedAt=M.today();c.processedBy=u.id}
+ for(const c of clients){attachSourceComment(c);M.moveClient(s,u,c.id,pipelineId,stageId);c.processedAt=M.today();c.processedBy=u.id}
  return clients;
 }
 function groupExisting(s,u,batchId,choices,fileDate){
@@ -171,5 +307,5 @@ function groupExisting(s,u,batchId,choices,fileDate){
  }
  batch.groupedInto=groups.map(b=>b.id);s.leadBatches.push(...groups);return groups;
 }
-const api={batchCandidates,promoteBatch,promote,groupExisting,commentGroups,classifyComment,importComment,groupedCommit,manualStage,migrateCold,ensureColdStage,ingestIntegration,socialLinks,socialFields,categories,fields,isSales,canImport,upgrade,mapping,preview,commit,distribution,distribute,phone};if(typeof module!=='undefined')module.exports=api;root.LeadModel=api;
+const api={batchCandidates,batchProgress,archiveBatch,restoreBatch,promoteBatch,promote,groupExisting,commentGroups,classifyComment,importComment,groupedCommit,manualStage,migrateCold,ensureColdStage,ensureProposalStage,acceptIntegrationDeals,ingestIntegration,socialLinks,socialFields,categories,fields,isSales,canImport,upgrade,mapping,preview,commit,distribution,distribute,phone,isCommentHeader,sourceCommentFrom,excelValue,excelNote,sheetBounds,withCellNotes,deriveSourceComment};if(typeof module!=='undefined')module.exports=api;root.LeadModel=api;
 })(globalThis);

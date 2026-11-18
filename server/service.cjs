@@ -60,25 +60,50 @@ function promoteBatch(db, user, id, body) {
   });
 }
 
+function archiveBatch(db, user, id) {
+  return command(db, user, (state, actor) => ({batch: Leads.archiveBatch(state, actor, id)}));
+}
+
+function restoreBatch(db, user, id) {
+  return command(db, user, (state, actor) => ({batch: Leads.restoreBatch(state, actor, id)}));
+}
+
 function clip(value, max) {
   const text = String(value ?? '').trim();
   return text.length > max ? text.slice(0, max) : text;
+}
+
+function stageToken(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return '';
+  return clip(source.stageId || source.stage || source.stageName, 120);
 }
 
 function fromIstok(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'Каждый лид должен быть объектом');
   const comment = clip(raw.comment ?? raw.text ?? raw['комментарий'], 5000);
   const post = clip(raw.postUrl ?? raw.post ?? raw['ссылка на пост'], 500);
-  const date = clip(raw.date ?? raw['дата'], 40);
+  const date = clip(raw.date ?? raw.dealDate ?? raw['дата'], 40);
   const notes = [comment, post ? 'Пост: ' + post : '', date ? 'Дата источника: ' + date : ''].filter(Boolean).join('\n');
   return {
     name: clip(raw.name ?? raw['имя'], 300),
+    company: clip(raw.company ?? raw['компания'], 300),
     phone: clip(raw.phone ?? raw['телефон'], 40),
     email: clip(raw.email, 200),
     vk: clip(raw.vk ?? raw.vkUrl, 500),
     telegram: clip(raw.telegram ?? raw.telegramUrl ?? raw.tg, 500),
-    source: clip(raw.source, 120) || 'Исток',
+    source: clip(raw.source ?? raw['источник'], 120) || 'Исток',
     notes,
+    comment,
+    description: clip(raw.description ?? raw['описание'], 2000),
+    clientTask: clip(raw.clientTask ?? raw.task ?? raw['задача'], 2000),
+    kpVariants: clip(raw.kpVariants ?? raw.kp ?? raw.proposal ?? raw['кп'], 4000),
+    kpLink: clip(raw.kpLink ?? raw.kpUrl ?? raw.proposalUrl ?? raw['ссылка на кп'], 500),
+    callAt: clip(raw.callAt ?? raw.callDate ?? raw['созвон'], 40),
+    statusNote: clip(raw.statusNote ?? raw['статус'], 500),
+    date,
+    stage: clip(raw.stage, 120),
+    stageId: clip(raw.stageId, 80),
+    stageName: clip(raw.stageName, 120),
   };
 }
 
@@ -88,16 +113,53 @@ function ingestLeads(db, keyRow, body, cfg) {
   if (!list.length) throw new HttpError(400, 'Список лидов пуст');
   if (list.length > 1000) throw new HttpError(400, 'За один запрос — не больше 1000 лидов');
   const records = list.map(fromIstok);
-  let summary = {received: records.length, created: 0, duplicates: 0, errors: 0, batchId: ''};
+  const defaults = Array.isArray(body) ? {} : (body || {});
+  const intoStage = Boolean(stageToken(defaults) || records.some(record => stageToken(record)));
+  let summary = {received: records.length, created: 0, duplicates: 0, errors: 0, batchId: '', ids: [], deals: []};
   db.transaction(() => {
     const state = store.load(db);
     upgradeInPlace(state);
     const admin = state.users.find(item => item.role === 'admin');
     if (!admin) throw new HttpError(500, 'В системе нет администратора для приёма лидов');
-    const pipelineId = clip(body?.pipelineId, 80) || cfg.integrationPipelineId || state.pipelines.find(item => item.id === 'outbound')?.id || state.pipelines[0]?.id;
+    const pipelineId = clip(defaults.pipelineId, 80) || cfg.integrationPipelineId || state.pipelines.find(item => item.id === 'outbound')?.id || state.pipelines[0]?.id;
     if (!pipelineId) throw new HttpError(400, 'Не задана воронка для интеграции');
-    const headers = [...new Set(records.flatMap(record => Object.keys(record)))];
-    const rows = records.map(record => headers.map(header => record[header] ?? ''));
+    if (intoStage) {
+      const deals = domainWrap(() => Leads.acceptIntegrationDeals(state, records, {
+        pipelineId,
+        stage: stageToken(defaults),
+        stageId: clip(defaults.stageId, 80),
+        stageName: clip(defaults.stage || defaults.stageName, 120),
+        name: clip(defaults.batchName, 180) || ('Сделка · ' + M.today()),
+        source: clip(defaults.source, 120) || 'Интеграция',
+      }));
+      summary = {
+        received: records.length,
+        created: deals.filter(deal => deal.status === 'created').length,
+        duplicates: deals.filter(deal => deal.status === 'duplicate').length,
+        errors: deals.filter(deal => deal.status === 'error').length,
+        batchId: '',
+        ids: deals.filter(deal => deal.status === 'created').map(deal => deal.id),
+        deals,
+      };
+      if (summary.ids.length === 1) summary.id = summary.ids[0];
+      if (summary.created) {
+        store.save(db, state);
+        store.bump(db);
+      }
+      store.addIntegrationImport(db, {
+        id: crypto.randomUUID(),
+        keyId: keyRow.id,
+        source: 'deal',
+        ...summary,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
+    const legacy = records.map(record => ({
+      name: record.name, phone: record.phone, email: record.email, vk: record.vk, telegram: record.telegram, source: record.source, notes: record.notes,
+    }));
+    const headers = [...new Set(legacy.flatMap(record => Object.keys(record)))];
+    const rows = legacy.map(record => headers.map(header => record[header] ?? ''));
     const map = headers.map(header => Leads.fields[header] ? header : '');
     const opts = {
       name: clip(body?.batchName, 180) || ('Исток · ' + M.today()),
@@ -121,6 +183,10 @@ function ingestLeads(db, keyRow, body, cfg) {
       batch.fileDate = opts.fileDate;
       batch.integrationKeyId = keyRow.id;
       summary.batchId = batch.id;
+      const fresh = state.clients.filter(client => client.batchId === batch.id);
+      summary.ids = fresh.map(client => client.id);
+      summary.deals = fresh.map(client => ({id: client.id, name: client.name, status: 'created'}));
+      if (summary.ids.length === 1) summary.id = summary.ids[0];
       store.save(db, state);
       store.bump(db);
     }
@@ -217,7 +283,7 @@ function importDump(db, user, body) {
 }
 
 module.exports = {
-  command, importLeads, groupBatch, distributeBatch, promoteBatch, ingestLeads,
+  command, importLeads, groupBatch, distributeBatch, promoteBatch, archiveBatch, restoreBatch, ingestLeads,
   createIntegrationKey, listIntegrationKeys, revokeIntegrationKey, findIntegrationKey,
   exportDump, importDump,
 };

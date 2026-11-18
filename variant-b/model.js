@@ -1,7 +1,7 @@
 (function(root){
 const Access=root.CRMAccess||(typeof require==='function'?require('./assets/access-model.js'):null);
 const has=(s,u,k)=>Access.has(s,u,k);
-const roles={admin:'Админ',leader:'Руководитель проекта',sales:'Менеджер 1 категории',sales_intern:'Менеджер-стажёр',rop:'РОП — руководитель отдела продаж',pm:'Прожект-менеджер',developer:'Разработчик'};
+const roles={admin:'Админ',leader:'Руководитель проекта',sales:'Менеджер 1 категории',sales_intern:'Менеджер-стажёр',rop:'РОП — руководитель отдела продаж',pm:'Проджект-менеджер',dev_head:'Начальник разработки',developer:'Разработчик'};
 const uid=()=>globalThis.crypto?.randomUUID?.()||'id-'+Date.now()+'-'+Math.random().toString(36).slice(2);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Vladivostok',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const statuses=['В очереди','В работе','На проверке','Готово'];
