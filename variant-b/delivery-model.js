@@ -36,6 +36,26 @@ function moveProject(state,user,projectId,stageId){
  project.devHistory.push({at:new Date().toISOString(),stageId:stage.id,by:user.id});
  return project;
 }
+function handoverBrief(client){
+ const raw=client?.handover;
+ if(!raw||typeof raw!=='object')return null;
+ const files=Array.isArray(raw.files)?raw.files.map(item=>String(item||'').trim().slice(0,200)).filter(Boolean).slice(0,20):[];
+ return {
+  sold:String(raw.sold||'').trim().slice(0,2000),
+  kp:String(raw.kp||'').trim().slice(0,2000),
+  amount:Number(raw.amount)||Number(client.amount)||0,
+  due:String(raw.due||'').trim().slice(0,40),
+  contacts:String(raw.contacts||'').trim().slice(0,1000),
+  kpLink:String(raw.kpLink||client.kpLink||'').trim().slice(0,500),
+  files,
+  at:String(raw.at||'').slice(0,40),
+  by:String(raw.by||'').slice(0,80),
+ };
+}
+function keepHandover(project,client){
+ const brief=handoverBrief(client);
+ if(brief&&brief.sold&&!project.handover)project.handover=brief;
+}
 // Выигранная сделка продолжается как проект на доске разработки, а не заканчивается.
 function ensureFromWon(state,client,actorId){
  const sale=M.stage(state,client);
@@ -50,6 +70,7 @@ function ensureFromWon(state,client,actorId){
   }
   project.sourceClientId=project.sourceClientId||client.id;
   if(client.ownerId&&!(project.members||[]).includes(client.ownerId))project.members=[...(project.members||[]),client.ownerId];
+  keepHandover(project,client);
   return project;
  }
  const titleBase=String(client.company||client.name||'Новый заказчик').trim()||'Новый заказчик';
@@ -74,13 +95,15 @@ function ensureFromWon(state,client,actorId){
   mockup:{name:'',data:''},
   sourceClientId:client.id,
  };
+ const brief=handoverBrief(client);
+ if(brief&&brief.sold)project.handover=brief;
  state.projects.push(project);
  client.project=project.id;
  client.notes=Array.isArray(client.notes)?client.notes:[];
  if(!client.notes.some(note=>String(note).includes('передана в разработку')))client.notes.unshift('Сделка передана в разработку: '+project.title);
  return project;
 }
-const api={stages,stageById,upgrade,canMove,moveProject,ensureFromWon};
+const api={stages,stageById,upgrade,canMove,moveProject,ensureFromWon,handoverBrief};
 if(typeof module!=='undefined')module.exports=api;
 root.DeliveryModel=api;
 })(globalThis);

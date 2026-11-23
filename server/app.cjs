@@ -462,7 +462,7 @@ async function route(req, res, db, cfg) {
     }
     if (pathname === '/api/telegram/badge' && method === 'GET') {
       const status = bot.status(session.user);
-      return send(res, 200, {unread: status.unread, byProject: status.byProject || {}});
+      return send(res, 200, {unread: status.unread, byProject: status.byProject || {}, linkedProjects: status.linkedProjects || []});
     }
     if (pathname === '/api/telegram' && method === 'GET') return send(res, 200, bot.overview(session.user));
     if (pathname === '/api/telegram/token' && method === 'POST') {
@@ -481,6 +481,10 @@ async function route(req, res, db, cfg) {
     if (pathname === '/api/telegram/ask' && method === 'POST') {
       const body = await readJson(req, 8 * 1024);
       return send(res, 200, bot.askLink(session.user, body.scope, body.projectId));
+    }
+    if (pathname === '/api/telegram/project-send' && method === 'POST') {
+      const body = await readJson(req, 16 * 1024);
+      return send(res, 200, await bot.sendProject(session.user, body.projectId, body.text, body.confirmTo));
     }
     if (pathname === '/api/telegram/client-send' && method === 'POST') {
       const body = await readJson(req, 32 * 1024);

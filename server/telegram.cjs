@@ -300,7 +300,14 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
         if (chat.link?.scope === 'project' && chat.link.projectId) bag[chat.link.projectId] = (bag[chat.link.projectId] || 0) + chat.unread;
         return bag;
       }, {}),
+      linkedProjects: linkedProjects(user),
     };
+  }
+
+  function linkedProjects(user) {
+    if (!user) return [];
+    const snapshot = state();
+    return db.all(`SELECT project_id FROM telegram_links WHERE scope = 'project'`).map(row => row.project_id).filter(id => M.canProject(snapshot, user, id));
   }
 
   function linkRequests() {
@@ -313,12 +320,12 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
   }
 
   function askLink(user, scope, projectId = '') {
-    if (scope !== 'team' && scope !== 'project') throw new HttpError(400, 'Укажите командный чат или проект');
-    if (scope === 'project' && !M.canProject(state(), user, projectId)) throw new HttpError(403, 'Проект недоступен');
+    if (scope !== 'team' && scope !== 'project' && scope !== 'assign') throw new HttpError(400, 'Укажите командный чат или проект');
+    if ((scope === 'project' || scope === 'assign') && !M.canProject(state(), user, projectId)) throw new HttpError(403, 'Проект недоступен');
     const fresh = linkRequests().filter(item => Date.now() - Date.parse(item.at || 0) < 14 * 24 * 60 * 60 * 1000);
     const key = user.id + '|' + scope + '|' + (scope === 'team' ? '' : projectId);
     if (!fresh.some(item => item.userId + '|' + item.scope + '|' + (item.projectId || '') === key)) {
-      const project = scope === 'project' ? M.project(state(), projectId) : null;
+      const project = scope === 'team' ? null : M.project(state(), projectId);
       fresh.push({userId: user.id, userName: user.name, scope, projectId: scope === 'team' ? '' : projectId, projectTitle: project?.title || '', at: new Date().toISOString()});
     }
     putSetting(db, 'telegram_link_requests', JSON.stringify(fresh.slice(-40)));
@@ -328,7 +335,8 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
   function overview(user) {
     const snapshot = state();
     const projects = (snapshot.projects || []).filter(project => user.role === 'admin' || M.canManage(snapshot, user, project.id)).map(project => ({id: project.id, title: project.title}));
-    return {...status(user), chats: visibleChats(user), projects, requests: user.role === 'admin' ? linkRequests() : []};
+    const requests = user.role === 'admin' ? linkRequests() : (['leader', 'dev_head', 'pm'].includes(user.role) ? linkRequests().filter(item => item.scope === 'assign') : []);
+    return {...status(user), chats: visibleChats(user), projects, requests};
   }
 
   function setToken(user, value) {
@@ -375,6 +383,18 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     db.run('INSERT INTO telegram_reads (user_id, chat_id, last_id) VALUES (?, ?, ?) ON CONFLICT(user_id, chat_id) DO UPDATE SET last_id = excluded.last_id', user.id, String(chatId), last);
     const current = status(user);
     return {unread: current.unread, byProject: current.byProject};
+  }
+
+  async function sendProject(user, projectId, text, confirmTo) {
+    const snapshot = state();
+    const project = M.project(snapshot, projectId);
+    if (!project || !M.canProject(snapshot, user, projectId)) throw new HttpError(403, 'Проект недоступен');
+    const link = linkRow('project', projectId);
+    if (!link) throw new HttpError(400, 'Группа проекта в Telegram не подключена');
+    const label = 'группа проекта «' + project.title + '»';
+    if (String(confirmTo || '') !== label) throw new HttpError(400, 'Подтвердите получателя');
+    await send(user, link.chat_id, text);
+    return {ok: true, label};
   }
 
   async function send(user, chatId, text, options = {}) {
@@ -439,7 +459,7 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     if (timer) clearTimeout(timer);
   }
 
-  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, sendKnownChat: (user, chatId, text) => send(user, chatId, text, {known: true}), file, seedDemo, start, stop, memory, canSeeChat};
+  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, sendProject, sendKnownChat: (user, chatId, text) => send(user, chatId, text, {known: true}), file, seedDemo, start, stop, memory, canSeeChat};
 }
 
 module.exports = {createTelegram, createMemoryMock, maskToken, cleanTelegramLogin, GROUP_TYPES};

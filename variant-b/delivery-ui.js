@@ -32,6 +32,88 @@ function deliveryTaskForm(projectId){
   toast('Задача назначена. Разработчик увидит проект и только свою задачу.');
  });
 }
+function personContact(user){
+ if(!user)return '';
+ const telegram=String(user.telegram||'').replace(/^@/,'');
+ const extra=[M.roles[user.role]||'',telegram?'Telegram @'+telegram:'',user.sipuniExtension?'внутр. '+user.sipuniExtension:''].filter(Boolean).join(' · ');
+ return `<p><b>${esc(user.name)}</b>${extra?' · '+esc(extra):''}</p>`;
+}
+function handoverBriefView(brief){
+ if(!brief?.sold)return '';
+ const link=String(brief.kpLink||'').trim();
+ const linkHtml=link?`<p><b>Ссылка на КП.</b> ${/^https?:\/\//i.test(link)?`<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link)}</a>`:esc(link)}</p>`:'<p><b>Ссылка на КП.</b> нет</p>';
+ const files=(brief.files||[]).length?brief.files.map(name=>esc(name)).join(', '):'не приложены';
+ return `<div class="handover-brief"><p><b>Что продали.</b> ${esc(brief.sold)}</p><p><b>Вариант КП.</b> ${esc(brief.kp||'не указан')}</p><p><b>Сумма.</b> ${money(brief.amount||0)}</p><p><b>Срок.</b> ${esc(brief.due||'не указан')}</p><p><b>Контакты.</b> ${esc(brief.contacts||'не указаны')}</p>${linkHtml}<p><b>Файлы.</b> ${files}</p></div>`;
+}
+function handoverBrief(project){
+ return project?.handover?.sold?`<section class="handover-card"><h3>Бриф от менеджера</h3>${handoverBriefView(project.handover)}</section>`:'';
+}
+function projectDevelopers(project){
+ return (project.members||[]).map(id=>state.users.find(user=>user.id===id)).filter(user=>user&&(user.role==='developer'||user.role==='dev_head'));
+}
+function projectHandover(client){
+ if(M.stage(state,client)?.kind!=='won')return '';
+ const project=client.project&&M.project(state,client.project);
+ if(!project)return '';
+ const stage=DeliveryModel.stageById(project.devStage);
+ const pm=project.pmId&&state.users.find(user=>user.id===project.pmId);
+ const developers=projectDevelopers(project);
+ const missing=!pm||!developers.length;
+ const linked=typeof telegramLinked!=='undefined'&&telegramLinked.includes(project.id);
+ const thread=(state.messages||[]).filter(item=>item.projectId===project.id).slice(-3);
+ return `<section class="handover-card"><h3>Проект</h3><p><b>${esc(project.title)}</b></p><p>Статус: ${esc(project.status||'не указан')}. Этап разработки: ${esc(stage?.name||'Начало проекта')}. Этап меняет руководитель, не менеджер.</p><div class="actions">${action('Открыть проект','project',project.id)}</div><h3>Проджект</h3>${pm?personContact(pm):'<p>Проджект ещё не назначен</p>'}<h3>Разработчики</h3>${developers.length?developers.map(personContact).join(''):'<p>Разработчик ещё не назначен</p>'}${missing?`<div class="actions">${action('Попросить назначить','ask-assign',project.id)}</div>`:''}${handoverBriefView(project.handover||client.handover)}<h3>Написать команде</h3>${thread.map(item=>`<p><b>${esc(name(item.from))}</b> → ${esc(item.to?name(item.to):'команде проекта')}: ${esc(item.text)}</p>`).join('')||'<p>Обсуждений пока нет.</p>'}<div class="actions">${action('Написать в обсуждение','deal-discuss',client.id)}${linked?action('Написать в группу проекта','deal-telegram',client.id):''}</div></section>`;
+}
+function handoverForm(client,stageId){
+ if(!client||!M.canClient(state,u(),client))throw Error('Клиент недоступен');
+ const materials=(state.materials||[]).filter(item=>item.projectId&&item.projectId===client.project);
+ const files=materials.map(item=>`<label class="member-choice"><input type="checkbox" name="file" value="${esc(item.name)}" checked>${esc(item.name)}</label>`).join('');
+ const contacts=[client.phone,client.email,client.socials].map(value=>String(value||'').trim()).filter(Boolean).join('\n');
+ modal('Передать в проект','<p class="hint">Бриф сохранится в проекте. Его увидят проджект и разработчики. Доску разработки менеджер не двигает.</p>'+area('Что продали','sold',client.description||client.clientTask||'')+area('Выбранный вариант КП','kp',client.kpVariants||'')+field('Сумма','amount',client.amount||0,'number',true)+field('Срок','due',client.dealDate||'','date')+area('Контакты клиента','contacts',contacts)+field('Ссылка на КП','kpLink',client.kpLink||'','text')+(files?`<h3>Файлы</h3>${files}`:'<p class="hint">Отдельных файлов пока нет. Ссылка на КП сохранится в брифе.</p>'),'Передать в проект',fd=>{
+  const sold=String(fd.get('sold')||'').trim();
+  if(!sold)throw Error('Напишите, что продали');
+  client.handover={sold,kp:String(fd.get('kp')||'').trim(),amount:Number(fd.get('amount'))||0,due:String(fd.get('due')||'').trim(),contacts:String(fd.get('contacts')||'').trim(),kpLink:String(fd.get('kpLink')||'').trim(),files:fd.getAll('file'),at:new Date().toISOString(),by:u().id};
+  client.amount=client.handover.amount;
+  client.kpVariants=client.handover.kp;
+  client.kpLink=client.handover.kpLink;
+  client.description=sold;
+  M.moveClient(state,u(),client.id,client.pipelineId,stageId);
+  toast('Сделка передана в проект');
+ });
+}
+function dealDiscuss(id){
+ const client=vc().find(item=>item.id===id);
+ const project=client?.project&&M.project(state,client.project);
+ if(!client||!project||!M.canProject(state,u(),project.id))throw Error('Проект недоступен');
+ const pm=project.pmId&&state.users.find(user=>user.id===project.pmId);
+ const developer=projectDevelopers(project)[0];
+ const target=pm||developer;
+ modal('Обсуждение проекта',`<p class="hint">Сообщение попадёт в обсуждения проекта «${esc(project.title)}». ${target?'Получатель: '+esc(target.name)+'.':'Проджект ещё не назначен, сообщение увидит команда проекта.'}</p>`+area('Сообщение','text','',true),'Отправить',fd=>{
+  const text=String(fd.get('text')||'').trim();
+  if(!text)throw Error('Введите сообщение');
+  state.messages.push({id:M.uid(),projectId:project.id,taskId:'',from:u().id,to:target?.id||'',text,at:new Date().toISOString()});
+  toast('Сообщение в обсуждении проекта');
+ });
+}
+function dealTelegram(id){
+ const client=vc().find(item=>item.id===id);
+ const project=client?.project&&M.project(state,client.project);
+ if(!client||!project||!M.canProject(state,u(),project.id))throw Error('Проект недоступен');
+ const label='группа проекта «'+project.title+'»';
+ modal('Сообщение в группу проекта',`<p class="mail-confirm"><strong>Кому:</strong> ${esc(label)}, <strong>канал:</strong> Telegram</p>`+area('Сообщение','text',''),'Отправить',async fd=>{
+  const text=String(fd.get('text')||'').trim();
+  if(!text)throw Error('Введите сообщение');
+  if(!window.confirm('Кому: '+label+', канал: Telegram?'))return false;
+  await telegramApi('/api/telegram/project-send',{method:'POST',body:{projectId:project.id,text,confirmTo:label}});
+  toast('Отправлено: '+label);
+  return 'saved';
+ });
+}
+async function askAssign(projectId){
+ const project=M.project(state,projectId);
+ if(!project||!M.canProject(state,u(),project.id))throw Error('Проект недоступен');
+ await telegramApi('/api/telegram/ask',{method:'POST',body:{scope:'assign',projectId}});
+ toast('Просьба отправлена руководителю');
+}
 function dealCard(client){
  const rows=[['Дата сделки',client.dealDate],['Описание',client.description],['Задача клиента',client.clientTask],['Варианты КП',client.kpVariants],['Созвон',client.callAt],['Статус',client.statusNote]];
  const filled=rows.filter(([,value])=>String(value||'').trim());

@@ -1,5 +1,6 @@
 let telegramUnread = 0;
 let telegramByProject = {};
+let telegramLinked = [];
 let telegramChatId = '';
 let telegramRelinkId = '';
 
@@ -164,14 +165,16 @@ async function loadTelegramPage() {
   const root = $('#telegram-root');
   if (!root) return;
   telegramByProject = data.byProject || {};
+  telegramLinked = data.linkedProjects || telegramLinked;
   telegramBadge(data.unread);
   const dialogs = (data.chats || []).filter(chat => chat.visible && chat.link);
   if (!telegramChatId || !dialogs.some(chat => chat.chatId === telegramChatId)) telegramChatId = dialogs.slice().sort((a, b) => b.unread - a.unread)[0]?.chatId || '';
   const current = dialogs.find(chat => chat.chatId === telegramChatId) || null;
   const messages = current ? (await telegramApi('/api/telegram/messages?chatId=' + encodeURIComponent(current.chatId))).messages : [];
   if (current) telegramApi('/api/telegram/read', {method: 'POST', body: {chatId: current.chatId}}).then(result => { telegramByProject = result.byProject || telegramByProject; telegramBadge(result.unread); }).catch(() => {});
-  const asks = (data.requests || []).map(item => `<p>${esc(item.userName || 'Сотрудник')} просит подключить ${item.scope === 'project' ? 'группу проекта «' + esc(item.projectTitle || 'проект') + '»' : 'командный чат'}.</p>`).join('');
-  const askBanner = asks ? `<section class="tg-connect"><h2>Просьбы подключить группу</h2>${asks}</section>` : '';
+  const linkAsks = (data.requests || []).filter(item => item.scope !== 'assign').map(item => `<p>${esc(item.userName || 'Сотрудник')} просит подключить ${item.scope === 'project' ? 'группу проекта «' + esc(item.projectTitle || 'проект') + '»' : 'командный чат'}.</p>`).join('');
+  const teamAsks = (data.requests || []).filter(item => item.scope === 'assign').map(item => `<p>${esc(item.userName || 'Сотрудник')} просит назначить проджекта и разработчиков на проект «${esc(item.projectTitle || 'проект')}».</p>`).join('');
+  const askBanner = `${linkAsks ? `<section class="tg-connect"><h2>Просьбы подключить группу</h2>${linkAsks}</section>` : ''}${teamAsks ? `<section class="tg-connect"><h2>Просьбы назначить команду</h2>${teamAsks}</section>` : ''}`;
   const cannotLink = u().role !== 'admin' && !(data.projects || []).length;
   const emptyAsk = cannotLink && !dialogs.length ? `<section class="tg-connect"><h2>Групп пока нет</h2><p>Группу подключает руководитель или администратор.</p><p class="tg-who">Командный чат видят все, кто вошёл в CRM. Группу проекта видят его участники.</p><button type="button" class="btn" data-tg="ask" data-scope="team">Попросить подключить</button></section>` : '';
   const workspace = emptyAsk ? emptyAsk : `${telegramNewGroups(data)}<div class="tg-layout"><div class="tg-list">${telegramDialogs(data)}</div>${telegramThread(current, messages, data)}</div>`;
@@ -189,6 +192,7 @@ async function fillProjectTelegram() {
   if (!host) return;
   const data = await telegramApi('/api/telegram');
   telegramByProject = data.byProject || {};
+  telegramLinked = data.linkedProjects || telegramLinked;
   telegramBadge(data.unread);
   const tab = document.querySelector('[data-action="project-tab"][data-id="telegram"]');
   if (tab) {
@@ -272,11 +276,13 @@ async function telegramTick() {
   const data = await telegramApi('/api/telegram/badge');
   const next = Number(data.unread) || 0;
   const by = data.byProject || {};
-  const changed = next !== telegramUnread || JSON.stringify(by) !== JSON.stringify(telegramByProject);
+  const links = data.linkedProjects || [];
+  const changed = next !== telegramUnread || JSON.stringify(by) !== JSON.stringify(telegramByProject) || JSON.stringify(links) !== JSON.stringify(telegramLinked);
   telegramByProject = by;
+  telegramLinked = links;
   telegramBadge(next);
   if (!changed || $('#modal')?.open || document.activeElement?.closest('.tg-compose, .tg-new, .tg-relink')) return;
-  if (page === 'telegram' || page === 'projects' || page === 'overview' || (page === 'project' && projectTab === 'telegram')) render();
+  if (page === 'telegram' || page === 'projects' || page === 'overview' || page === 'clients' || (page === 'project' && projectTab === 'telegram')) render();
 }
 
 document.addEventListener('click', event => {

@@ -45,6 +45,19 @@ test('Won deal becomes one project; head, PM and admin see all, developer sees o
   assert.ok(project.members.includes('sales'));
   assert.equal(D.ensureFromWon(state, client, sales.id).id, project.id);
   assert.equal(state.projects.filter(item => item.sourceClientId === '4').length, 1);
+  const kept = state.projects.find(item => item.id === '2');
+  const keptDescription = kept.description;
+  const olga = state.clients.find(item => item.id === '5');
+  olga.handover = {sold: 'Сервис прайсов', kp: 'Базовый пакет', amount: 170000, due: '2026-12-01', contacts: '+7 999 000-00-05', kpLink: 'https://kp.example/olga', files: ['Прайс.txt']};
+  D.ensureFromWon(state, olga, sales.id);
+  assert.equal(kept.description, keptDescription);
+  assert.equal(kept.handover.sold, 'Сервис прайсов');
+  assert.equal(kept.handover.files[0], 'Прайс.txt');
+  client.handover = {sold: 'Автоматизация контента', kp: 'Старт', amount: 55000, due: '2026-12-15', contacts: 'mikhail@example.test', kpLink: '', files: []};
+  D.ensureFromWon(state, client, sales.id);
+  assert.equal(project.handover.sold, 'Автоматизация контента');
+  assert.equal(project.pmId, '');
+  assert.throws(() => D.moveProject(state, sales, project.id, 'dev-r2'));
 
   assert.throws(() => D.moveProject(state, user('anna'), project.id, 'dev-support'));
   D.moveProject(state, head, project.id, 'dev-r1');
