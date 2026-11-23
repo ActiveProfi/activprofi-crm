@@ -56,3 +56,8 @@
 .deal-wrap{display:flex;flex-direction:column;gap:6px}
 .sipuni-deal{width:100%}
 .sipuni-call{margin-top:8px}
+.handover-card{margin:14px 0;padding:14px 16px;background:#f4faf8;border:1px solid #c5ddd4;border-radius:10px}
+.handover-card h3{margin:14px 0 6px;font-size:15px}
+.handover-card h3:first-child{margin-top:0}
+.handover-card p{margin:4px 0}
+.handover-brief{margin-top:8px}
