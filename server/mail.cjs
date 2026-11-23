@@ -119,8 +119,11 @@ function createSmtp({settings, connect}) {
           stage = 'auth-pass';
           write(Buffer.from(settings.user).toString('base64'));
         } else if (stage === 'auth-pass') {
-          stage = 'mail';
+          stage = 'auth-done';
           write(Buffer.from(settings.pass).toString('base64'));
+        } else if (stage === 'auth-done') {
+          stage = 'mail';
+          write(`MAIL FROM:<${settings.from}>`);
         } else if (stage === 'mail') {
           stage = 'rcpt';
           write(`RCPT TO:<${to}>`);
