@@ -441,6 +441,10 @@ async function route(req, res, db, cfg) {
       const body = await readJson(req, 16 * 1024);
       return send(res, 200, {chats: bot.unlinkChat(session.user, body.chatId)});
     }
+    if (pathname === '/api/telegram/ask' && method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      return send(res, 200, bot.askLink(session.user, body.scope, body.projectId));
+    }
     if (pathname === '/api/telegram/messages' && method === 'GET') return send(res, 200, {messages: bot.messages(session.user, url.searchParams.get('chatId'))});
     if (pathname === '/api/telegram/messages' && method === 'POST') {
       const body = await readJson(req, 32 * 1024);

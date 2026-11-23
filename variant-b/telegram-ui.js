@@ -170,7 +170,12 @@ async function loadTelegramPage() {
   const current = dialogs.find(chat => chat.chatId === telegramChatId) || null;
   const messages = current ? (await telegramApi('/api/telegram/messages?chatId=' + encodeURIComponent(current.chatId))).messages : [];
   if (current) telegramApi('/api/telegram/read', {method: 'POST', body: {chatId: current.chatId}}).then(result => { telegramByProject = result.byProject || telegramByProject; telegramBadge(result.unread); }).catch(() => {});
-  root.innerHTML = `<div class="page-head"><div><h1>Чат команды</h1><p>Командная группа и переписки проектов в одном списке.</p></div></div>${telegramHow(data)}${telegramNewGroups(data)}<div class="tg-layout"><div class="tg-list">${telegramDialogs(data)}</div>${telegramThread(current, messages, data)}</div>`;
+  const asks = (data.requests || []).map(item => `<p>${esc(item.userName || 'Сотрудник')} просит подключить ${item.scope === 'project' ? 'группу проекта «' + esc(item.projectTitle || 'проект') + '»' : 'командный чат'}.</p>`).join('');
+  const askBanner = asks ? `<section class="tg-connect"><h2>Просьбы подключить группу</h2>${asks}</section>` : '';
+  const cannotLink = u().role !== 'admin' && !(data.projects || []).length;
+  const emptyAsk = cannotLink && !dialogs.length ? `<section class="tg-connect"><h2>Групп пока нет</h2><p>Группу подключает руководитель или администратор.</p><p class="tg-who">Командный чат видят все, кто вошёл в CRM. Группу проекта видят его участники.</p><button type="button" class="btn" data-tg="ask" data-scope="team">Попросить подключить</button></section>` : '';
+  const workspace = emptyAsk ? emptyAsk : `${telegramNewGroups(data)}<div class="tg-layout"><div class="tg-list">${telegramDialogs(data)}</div>${telegramThread(current, messages, data)}</div>`;
+  root.innerHTML = `<div class="page-head"><div><h1>Чат команды</h1><p>Командная группа и группы проектов. Командный чат видят все сотрудники.</p></div></div>${telegramHow(data)}${askBanner}${workspace}`;
   const box = root.querySelector('.tg-messages');
   if (box) box.scrollTop = box.scrollHeight;
 }
@@ -196,11 +201,11 @@ async function fillProjectTelegram() {
   if (!linked) {
     const fresh = (data.chats || []).filter(chat => !chat.link);
     const can = telegramCanAssign(data, projectId);
-    const steps = `<ol><li>Добавьте @CRM_ActivProfi_Bot в группу проекта и сделайте его администратором.</li><li>Напишите в группе любое сообщение.</li><li>Группа появится здесь. Нажмите «Подключить» — это и будет переписка проекта.</li></ol>`;
     if (!can) {
-      host.innerHTML = `<section class="tg-connect"><h2>Подключить группу Telegram</h2><p>Группу подключает администратор или руководитель проекта «${esc(project?.title || '')}».</p>${steps}</section>`;
+      host.innerHTML = `<section class="tg-connect"><h2>Группа проекта в Telegram</h2><p>Группу подключает руководитель или администратор.</p><p class="tg-who">Её читают участники проекта, администратор, проджект и руководитель разработки.</p><button type="button" class="btn" data-tg="ask" data-scope="project" data-project="${esc(projectId)}">Попросить подключить</button></section>`;
       return;
     }
+    const steps = `<ol><li>Добавьте @CRM_ActivProfi_Bot в группу проекта и сделайте его администратором.</li><li>Напишите в группе любое сообщение.</li><li>Группа появится здесь. Нажмите «Подключить» — это и будет переписка проекта.</li></ol>`;
     const suggested = fresh.find(chat => telegramSuggest(chat.title, [{id: projectId, title: project?.title || ''}]) === projectId);
     const buttons = fresh.map(chat => `<button type="button" class="btn tg-pick ${chat === suggested ? 'primary' : ''}" data-tg="project" data-id="${esc(chat.chatId)}" data-project="${esc(projectId)}">Подключить «${esc(chat.title)}»${chat === suggested ? ' — похоже на этот проект' : ''}</button>`).join('');
     host.innerHTML = `<section class="tg-connect"><h2>Подключить группу Telegram</h2><p>Переписка будет внутри проекта «${esc(project?.title || '')}». Одна группа — один проект.</p>${steps}${buttons || '<p class="muted">Новых групп пока нет. После сообщения в группе обновите страницу.</p>'}</section>`;
@@ -245,6 +250,12 @@ async function telegramAction(button) {
   if (kind === 'show-relink') {
     telegramRelinkId = telegramRelinkId === id ? '' : id;
     render();
+    return;
+  }
+  if (kind === 'ask') {
+    await telegramApi('/api/telegram/ask', {method: 'POST', body: {scope: button.dataset.scope || 'team', projectId: button.dataset.project || ''}});
+    toast('Просьба отправлена администратору');
+    button.disabled = true;
     return;
   }
   if (kind === 'unlink') {
