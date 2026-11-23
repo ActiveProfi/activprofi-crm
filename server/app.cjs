@@ -15,6 +15,7 @@ const {createTelegram} = require('./telegram.cjs');
 const {mailSettings, createSmtp} = require('./mail.cjs');
 const outbound = require('./outbound.cjs');
 const {createSipuni} = require('./sipuni.cjs');
+const kp = require('./kp.cjs');
 
 const telegramByDb = new WeakMap();
 const sipuniByDb = new WeakMap();
@@ -516,6 +517,42 @@ async function route(req, res, db, cfg) {
       if (session.user.role !== 'admin') throw new HttpError(403, 'Только администратор');
       return send(res, 200, {sent: bot.memory.sent});
     }
+  }
+
+  if (pathname === '/api/kp' && method === 'GET') {
+    requireUser(db, req);
+    return send(res, 200, {template: kp.templateOf(db), catalogue: kp.catalogueOf(db)});
+  }
+  if (pathname === '/api/kp/template' && method === 'PUT') {
+    const session = requireUser(db, req);
+    return send(res, 200, kp.saveTemplate(db, session.user, await readJson(req, 64 * 1024)));
+  }
+  if (pathname === '/api/kp/catalogue' && method === 'PUT') {
+    const session = requireUser(db, req);
+    return send(res, 200, kp.saveCatalogue(db, session.user, await readJson(req, 128 * 1024)));
+  }
+  if (pathname === '/api/kp/preview' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, kp.preview(db, session.user, await readJson(req, 128 * 1024)));
+  }
+  if (pathname === '/api/kp/documents' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, kp.saveDocument(db, session.user, await readJson(req, 128 * 1024)));
+  }
+  if (pathname === '/api/kp/send' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, await kp.sendProposal(db, session.user, currentMailer(cfg), await readJson(req, 64 * 1024)));
+  }
+  if (pathname === '/api/kp/suggest' && method === 'POST') {
+    requireUser(db, req);
+    return send(res, 200, kp.suggestProposal());
+  }
+  const kpFile = pathname.match(/^\/api\/kp\/files\/([^/]+)$/);
+  if (kpFile && method === 'GET') {
+    const session = requireUser(db, req);
+    const file = kp.fileFor(db, session.user, decodeURIComponent(kpFile[1]));
+    res.writeHead(200, {'Content-Type': 'application/pdf', 'Content-Length': file.bytes.length, 'Content-Disposition': 'inline; filename="' + file.name + '"', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'});
+    return res.end(file.bytes);
   }
 
   if (pathname === '/api/mail' && method === 'GET') {
