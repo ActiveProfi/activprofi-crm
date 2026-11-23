@@ -2,6 +2,7 @@
 
 .team-gap{margin-top:8px}.team-gap .link{display:inline;margin-left:4px;font-size:12px;vertical-align:baseline}fieldset .team-gap{margin:8px 4px 10px}
 .draft-note{margin:0 0 14px}.inline-staff{margin-top:12px;padding:12px}.inline-staff .btn{margin-top:8px}
+.funnel-scroll{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;align-items:stretch}.funnel-arrow{align-self:start;margin-top:12px;width:44px;height:44px;border:1px solid #d5e3ea;border-radius:8px;background:#fff;color:#153c51;font-size:18px}.funnel-hint{margin:0 0 12px;color:#4d6b7a;line-height:1.45}.funnel-board{min-width:0}.nav span{white-space:normal;line-height:1.25}.form-error .link{display:inline;margin-left:8px;background:none;color:#0b6e75;text-decoration:underline;padding:0}
 .tg-count{display:inline-block;min-width:18px;margin-left:8px;padding:1px 6px;border-radius:10px;background:#00858e;color:#fff;font-size:11px;line-height:16px;text-align:center;vertical-align:middle}
 .nav .tg-count{float:right;margin:2px 0 0}
 .project-body .tg-count{float:right}

@@ -303,10 +303,32 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     };
   }
 
+  function linkRequests() {
+    try {
+      const parsed = JSON.parse(setting(db, 'telegram_link_requests') || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function askLink(user, scope, projectId = '') {
+    if (scope !== 'team' && scope !== 'project') throw new HttpError(400, 'Укажите командный чат или проект');
+    if (scope === 'project' && !M.canProject(state(), user, projectId)) throw new HttpError(403, 'Проект недоступен');
+    const fresh = linkRequests().filter(item => Date.now() - Date.parse(item.at || 0) < 14 * 24 * 60 * 60 * 1000);
+    const key = user.id + '|' + scope + '|' + (scope === 'team' ? '' : projectId);
+    if (!fresh.some(item => item.userId + '|' + item.scope + '|' + (item.projectId || '') === key)) {
+      const project = scope === 'project' ? M.project(state(), projectId) : null;
+      fresh.push({userId: user.id, userName: user.name, scope, projectId: scope === 'team' ? '' : projectId, projectTitle: project?.title || '', at: new Date().toISOString()});
+    }
+    putSetting(db, 'telegram_link_requests', JSON.stringify(fresh.slice(-40)));
+    return {ok: true};
+  }
+
   function overview(user) {
     const snapshot = state();
     const projects = (snapshot.projects || []).filter(project => user.role === 'admin' || M.canManage(snapshot, user, project.id)).map(project => ({id: project.id, title: project.title}));
-    return {...status(user), chats: visibleChats(user), projects};
+    return {...status(user), chats: visibleChats(user), projects, requests: user.role === 'admin' ? linkRequests() : []};
   }
 
   function setToken(user, value) {
@@ -416,7 +438,7 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     if (timer) clearTimeout(timer);
   }
 
-  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, messages, markRead, send, file, seedDemo, start, stop, memory, canSeeChat};
+  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, file, seedDemo, start, stop, memory, canSeeChat};
 }
 
 module.exports = {createTelegram, createMemoryMock, maskToken, cleanTelegramLogin, GROUP_TYPES};
