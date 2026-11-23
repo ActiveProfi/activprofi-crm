@@ -353,7 +353,43 @@ function renderPdf(template, client, document) {
   if (document.kpLink) write('Интерактивное КП: ' + document.kpLink, 10, 6);
   write(template.footer, 10, 4);
   pages.push(commands.join('\n'));
+  return packPdf(font, pages, used);
+}
 
+function renderBlocksPdf(blocks) {
+  const font = loadFont();
+  const pages = [];
+  let commands = [];
+  let y = 800;
+  const used = new Map();
+  function remember(glyphs) {
+    for (const item of glyphs) used.set(item.gid, item.code);
+  }
+  function ensure(need) {
+    if (y < need) {
+      pages.push(commands.join('\n'));
+      commands = [];
+      y = 800;
+    }
+  }
+  function write(text, size, boldGap) {
+    const lines = wrapGlyphs(font, text, size, 515);
+    for (const glyphs of lines) {
+      ensure(size + 8);
+      remember(glyphs);
+      if (glyphs.length) commands.push(`BT /F1 ${size} Tf 1 0 0 1 40 ${y.toFixed(1)} Tm <${hexGlyphs(glyphs)}> Tj ET`);
+      y -= size + (boldGap || 4);
+    }
+  }
+  for (const block of blocks || []) {
+    if (!String(block.text || '').trim()) continue;
+    write(block.text, block.size || 12, block.gap || 4);
+  }
+  pages.push(commands.join('\n'));
+  return packPdf(font, pages, used);
+}
+
+function packPdf(font, pages, used) {
   const widths = [];
   const bfchar = [];
   for (const [gid, code] of used) {
@@ -520,5 +556,5 @@ async function sendProposal(db, user, mailer, body) {
 
 module.exports = {
   suggestProposal, templateOf, catalogueOf, saveTemplate, saveCatalogue, cleanDocument, variantMath, variantSummary,
-  renderHtml, renderPdf, saveDocument, preview, fileFor, sendProposal, rub, DEFAULT_CATALOGUE,
+  renderHtml, renderPdf, renderBlocksPdf, saveDocument, preview, fileFor, sendProposal, rub, DEFAULT_CATALOGUE,
 };

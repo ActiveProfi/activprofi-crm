@@ -16,6 +16,7 @@ const {mailSettings, createSmtp} = require('./mail.cjs');
 const outbound = require('./outbound.cjs');
 const {createSipuni} = require('./sipuni.cjs');
 const kp = require('./kp.cjs');
+const pitch = require('./pitch.cjs');
 
 const telegramByDb = new WeakMap();
 const sipuniByDb = new WeakMap();
@@ -553,6 +554,46 @@ async function route(req, res, db, cfg) {
     const file = kp.fileFor(db, session.user, decodeURIComponent(kpFile[1]));
     res.writeHead(200, {'Content-Type': 'application/pdf', 'Content-Length': file.bytes.length, 'Content-Disposition': 'inline; filename="' + file.name + '"', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'});
     return res.end(file.bytes);
+  }
+
+  if (pathname === '/api/pitch' && method === 'GET') {
+    requireUser(db, req);
+    return send(res, 200, {template: pitch.templateOf(db)});
+  }
+  if (pathname === '/api/pitch/template' && method === 'PUT') {
+    const session = requireUser(db, req);
+    return send(res, 200, pitch.saveTemplate(db, session.user, await readJson(req, 32 * 1024)));
+  }
+  if (pathname === '/api/pitch/preview' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, pitch.previewDeck(db, session.user, await readJson(req, 64 * 1024)));
+  }
+  if (pathname === '/api/pitch/documents' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, pitch.saveDeck(db, session.user, await readJson(req, 64 * 1024)));
+  }
+  if (pathname === '/api/pitch/send' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, await pitch.sendDeck(db, session.user, currentMailer(cfg), await readJson(req, 32 * 1024)));
+  }
+  if (pathname === '/api/pitch/suggest' && method === 'POST') {
+    requireUser(db, req);
+    return send(res, 200, pitch.suggestDeck());
+  }
+  const pitchFile = pathname.match(/^\/api\/pitch\/files\/([^/]+)$/);
+  if (pitchFile && method === 'GET') {
+    const session = requireUser(db, req);
+    const file = pitch.fileFor(db, session.user, decodeURIComponent(pitchFile[1]));
+    res.writeHead(200, {'Content-Type': 'application/pdf', 'Content-Length': file.bytes.length, 'Content-Disposition': 'inline; filename="' + file.name + '"', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'});
+    return res.end(file.bytes);
+  }
+  if (pathname === '/api/payments/invoice' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, pitch.addInvoice(db, session.user, await readJson(req, 16 * 1024)));
+  }
+  if (pathname === '/api/payments' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, pitch.addPayment(db, session.user, await readJson(req, 16 * 1024)));
   }
 
   if (pathname === '/api/mail' && method === 'GET') {
