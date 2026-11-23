@@ -296,6 +296,19 @@ function migrate(db) {
   `);
   const kp = db.get('SELECT id FROM schema_migrations WHERE id = ?', '006-kp');
   if (!kp) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '006-kp', new Date().toISOString());
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pitch_files (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      bytes BLOB NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const pitch = db.get('SELECT id FROM schema_migrations WHERE id = ?', '007-pitch');
+  if (!pitch) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '007-pitch', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};
