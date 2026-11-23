@@ -259,6 +259,31 @@ function migrate(db) {
   `);
   const telegram = db.get('SELECT id FROM schema_migrations WHERE id = ?', '004-telegram');
   if (!telegram) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '004-telegram', new Date().toISOString());
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sipuni_calls (
+      call_id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL DEFAULT '',
+      owner_id TEXT NOT NULL DEFAULT '',
+      direction TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      duration INTEGER NOT NULL DEFAULT 0,
+      record_id TEXT NOT NULL DEFAULT '',
+      record_url TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      extension TEXT NOT NULL DEFAULT '',
+      missed INTEGER NOT NULL DEFAULT 0,
+      seen INTEGER NOT NULL DEFAULT 0,
+      at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS sipuni_unknown (
+      phone TEXT PRIMARY KEY,
+      call_id TEXT NOT NULL DEFAULT '',
+      at TEXT NOT NULL DEFAULT '',
+      client_id TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  const sipuni = db.get('SELECT id FROM schema_migrations WHERE id = ?', '005-sipuni');
+  if (!sipuni) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '005-sipuni', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};

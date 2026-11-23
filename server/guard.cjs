@@ -186,6 +186,12 @@ function applyUsers(state, actor, presented, incoming, secrets) {
         const savedUser = state.users.find(item => item.id === change.user.id);
         if (savedUser) savedUser.telegram = raw;
       }
+      if (Object.prototype.hasOwnProperty.call(change.user, 'sipuniExtension')) {
+        const raw = String(change.user.sipuniExtension || '').trim();
+        if (raw && !/^\d{2,8}$/.test(raw)) throw new HttpError(400, 'Внутренний номер Sipuni — от 2 до 8 цифр');
+        const savedUser = state.users.find(item => item.id === change.user.id);
+        if (savedUser) savedUser.sipuniExtension = raw;
+      }
     }
   }
 }

@@ -42,6 +42,10 @@ function config() {
       from: process.env.SMTP_FROM || '',
       fromName: process.env.SMTP_FROM_NAME || '',
     },
+    sipuniUser: process.env.SIPUNI_USER || '',
+    sipuniSecret: process.env.SIPUNI_SECRET || '',
+    sipuniWebhookToken: process.env.SIPUNI_WEBHOOK_TOKEN || '',
+    sipuniMock: process.env.SIPUNI_MOCK === '1',
   };
 }
 
