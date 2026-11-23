@@ -14,8 +14,10 @@ const {ensureBoot} = require('./bootstrap.cjs');
 const {createTelegram} = require('./telegram.cjs');
 const {mailSettings, createSmtp} = require('./mail.cjs');
 const outbound = require('./outbound.cjs');
+const {createSipuni} = require('./sipuni.cjs');
 
 const telegramByDb = new WeakMap();
+const sipuniByDb = new WeakMap();
 
 function currentMailer(cfg) {
   const smtp = cfg.smtp || {};
@@ -71,6 +73,19 @@ function readBody(req, limit) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+async function readSipuniEvent(req, url) {
+  const fields = Object.fromEntries(url.searchParams);
+  if ((req.method || 'GET') === 'GET') return fields;
+  const raw = await readBody(req, 64 * 1024);
+  if (!raw.length) return fields;
+  const type = String(req.headers['content-type'] || '');
+  let body = {};
+  if (type.includes('application/json')) {
+    try { body = JSON.parse(raw.toString('utf8')); } catch { throw new HttpError(400, 'Некорректный JSON'); }
+  } else body = Object.fromEntries(new URLSearchParams(raw.toString('utf8')));
+  return {...fields, ...body};
 }
 
 async function readJson(req, limit = 32 * 1024 * 1024) {
@@ -154,6 +169,13 @@ async function route(req, res, db, cfg) {
     if (!key) throw new HttpError(401, 'Неверный ключ интеграции');
     const body = await readJson(req);
     return send(res, 200, service.ingestLeads(db, key, body, cfg));
+  }
+
+  if (pathname === '/api/sipuni/event' && (method === 'GET' || method === 'POST')) {
+    const sipuni = sipuniByDb.get(db);
+    const fields = await readSipuniEvent(req, url);
+    const result = sipuni.ingest(fields);
+    return send(res, result.status || 200, {success: result.success === true});
   }
 
   if (pathname.startsWith('/api/') && method !== 'GET' && method !== 'HEAD') assertBrowser(req);
@@ -502,6 +524,37 @@ async function route(req, res, db, cfg) {
     const body = await readJson(req, 8 * 1024);
     return send(res, 200, await outbound.testMail(session.user, currentMailer(cfg), body));
   }
+  if (pathname === '/api/sipuni' && method === 'GET') {
+    const session = requireUser(db, req);
+    return send(res, 200, sipuniByDb.get(db).feed(session.user));
+  }
+  if (pathname === '/api/sipuni/call' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 16 * 1024);
+    return send(res, 200, await sipuniByDb.get(db).callClient(session.user, body));
+  }
+  if (pathname === '/api/sipuni/test' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, await sipuniByDb.get(db).test(session.user));
+  }
+  if (pathname === '/api/sipuni/seen' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 8 * 1024);
+    return send(res, 200, sipuniByDb.get(db).seen(session.user, body.clientId));
+  }
+  if (pathname === '/api/sipuni/lead' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 16 * 1024);
+    return send(res, 200, sipuniByDb.get(db).createLead(session.user, body));
+  }
+  if (pathname === '/api/sipuni/record' && method === 'GET') {
+    const session = requireUser(db, req);
+    const file = await sipuniByDb.get(db).recordFor(session.user, url.searchParams.get('id'));
+    res.writeHead(200, {'Content-Type': file.mime, 'Content-Length': file.bytes.length, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline; filename="call.mp3"', 'X-Content-Type-Options': 'nosniff'});
+    res.end(file.bytes);
+    return;
+  }
+
   if (pathname === '/api/mail/send' && method === 'POST') {
     const session = requireUser(db, req);
     const body = await readJson(req, 64 * 1024);
@@ -544,6 +597,17 @@ function start(overrides = {}) {
   ensureBoot(db, cfg);
   const telegram = createTelegram({db, M, store, fetchImpl: globalThis.fetch, envToken: cfg.telegramBotToken || '', mock: cfg.telegramMock === true || cfg.telegramMock === '1'});
   telegramByDb.set(db, telegram);
+  const sipuni = createSipuni({
+    db, M,
+    user: cfg.sipuniUser || '',
+    secret: cfg.sipuniSecret || '',
+    webhookToken: cfg.sipuniWebhookToken || '',
+    mock: cfg.sipuniMock === true || cfg.sipuniMock === '1',
+    fetchImpl: cfg.sipuniFetch,
+    sync: cfg.sipuniSync !== false,
+  });
+  sipuniByDb.set(db, sipuni);
+  sipuni.start();
   if (cfg.telegramMockSeed === true || cfg.telegramMockSeed === '1') telegram.seedDemo();
   if (cfg.telegramPoll !== false) telegram.start();
   const server = http.createServer((req, res) => handler(db, cfg, req, res));
@@ -553,10 +617,11 @@ function start(overrides = {}) {
     server.listen(cfg.port, cfg.host, () => {
       const port = server.address().port;
       resolve({
-        server, db, cfg: {...cfg, port}, port, telegram,
+        server, db, cfg: {...cfg, port}, port, telegram, sipuni,
         url: `http://${cfg.host}:${port}`,
         close() {
           telegram.stop();
+          sipuni.stop();
           return new Promise((done, fail) => server.close(error => error ? fail(error) : done())).finally(() => db.close());
         },
       });

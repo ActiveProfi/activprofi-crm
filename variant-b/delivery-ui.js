@@ -55,8 +55,16 @@ function handoverLead(id){
   toast('Лид передан: '+name(ownerId));
  });
 }
+function callNote(note){
+ const raw=typeof note==='string'?note:(note.text||'');
+ const record=(raw.match(/\[\[record:([^\]]+)\]\]/)||[])[1]||'';
+ const text=raw.replace(/\[\[call:[^\]]+\]\]/g,'').replace(/\[\[record:[^\]]+\]\]/g,'').trim();
+ const safe=record&&(/^\/api\/sipuni\/record\?id=[\w.%:-]+$/.test(record)||/^https:\/\//i.test(record));
+ const link=safe?` <a href="${esc(record)}" target="_blank" rel="noopener noreferrer">Запись</a>`:'';
+ return `<p>${esc(text)}${link}</p>`;
+}
 function clientTimeline(client){
- const notes=(client.notes||[]).map(note=>`<p>${esc(typeof note==='string'?note:(note.text||''))}</p>`).join('');
+ const notes=(client.notes||[]).map(note=>callNote(note)).join('');
  const history=(client.stageHistory||[]).map(item=>{
   const pipeline=state.pipelines.find(pipe=>pipe.id===client.pipelineId);
   const stage=pipeline?.stages.find(row=>row.id===item.stageId);
