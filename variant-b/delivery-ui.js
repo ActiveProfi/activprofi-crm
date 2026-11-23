@@ -63,12 +63,24 @@ function projectHandover(client){
  const thread=(state.messages||[]).filter(item=>item.projectId===project.id).slice(-3);
  return `<section class="handover-card"><h3>Проект</h3><p><b>${esc(project.title)}</b></p><p>Статус: ${esc(project.status||'не указан')}. Этап разработки: ${esc(stage?.name||'Начало проекта')}. Этап меняет руководитель, не менеджер.</p><div class="actions">${action('Открыть проект','project',project.id)}</div><h3>Проджект</h3>${pm?personContact(pm):'<p>Проджект ещё не назначен</p>'}<h3>Разработчики</h3>${developers.length?developers.map(personContact).join(''):'<p>Разработчик ещё не назначен</p>'}${missing?`<div class="actions">${action('Попросить назначить','ask-assign',project.id)}</div>`:''}${handoverBriefView(project.handover||client.handover)}<h3>Написать команде</h3>${thread.map(item=>`<p><b>${esc(name(item.from))}</b> → ${esc(item.to?name(item.to):'команде проекта')}: ${esc(item.text)}</p>`).join('')||'<p>Обсуждений пока нет.</p>'}<div class="actions">${action('Написать в обсуждение','deal-discuss',client.id)}${linked?action('Написать в группу проекта','deal-telegram',client.id):''}</div></section>`;
 }
+function chosenProposalText(client){
+ const list=client.proposals||[];
+ const last=list[list.length-1];
+ if(!last)return {text:client.kpVariants||'',amount:client.amount||0};
+ const variant=(last.variants||[]).find(item=>item.name===(client.kpChoice||last.choice))||(last.variants||[])[0];
+ if(!variant)return {text:client.kpVariants||'',amount:client.amount||0};
+ const sub=(variant.lines||[]).reduce((sum,line)=>sum+(Number(line.qty)||0)*(Number(line.price)||0),0);
+ const discount=Math.min(100,Math.max(0,Number(variant.discount)||0));
+ const total=Math.round(sub*(1-discount/100));
+ return {text:variant.name+': '+(variant.fromPrice?'от ':'')+money(total)+(variant.duration?' / '+variant.duration:''),amount:total};
+}
 function handoverForm(client,stageId){
  if(!client||!M.canClient(state,u(),client))throw Error('Клиент недоступен');
  const materials=(state.materials||[]).filter(item=>item.projectId&&item.projectId===client.project);
  const files=materials.map(item=>`<label class="member-choice"><input type="checkbox" name="file" value="${esc(item.name)}" checked>${esc(item.name)}</label>`).join('');
  const contacts=[client.phone,client.email,client.socials].map(value=>String(value||'').trim()).filter(Boolean).join('\n');
- modal('Передать в проект','<p class="hint">Бриф сохранится в проекте. Его увидят проджект и разработчики. Доску разработки менеджер не двигает.</p>'+area('Что продали','sold',client.description||client.clientTask||'')+area('Выбранный вариант КП','kp',client.kpVariants||'')+field('Сумма','amount',client.amount||0,'number',true)+field('Срок','due',client.dealDate||'','date')+area('Контакты клиента','contacts',contacts)+field('Ссылка на КП','kpLink',client.kpLink||'','text')+(files?`<h3>Файлы</h3>${files}`:'<p class="hint">Отдельных файлов пока нет. Ссылка на КП сохранится в брифе.</p>'),'Передать в проект',fd=>{
+ const picked=chosenProposalText(client);
+ modal('Передать в проект','<p class="hint">Бриф сохранится в проекте. Его увидят проджект и разработчики. Доску разработки менеджер не двигает. Сумма и вариант берутся из выбранного КП, их можно поправить.</p>'+area('Что продали','sold',client.description||client.clientTask||'')+area('Выбранный вариант КП','kp',picked.text||client.kpVariants||'')+field('Сумма','amount',picked.amount||client.amount||0,'number',true)+field('Срок','due',client.dealDate||'','date')+area('Контакты клиента','contacts',contacts)+field('Ссылка на КП','kpLink',client.kpLink||'','text')+(files?`<h3>Файлы</h3>${files}`:'<p class="hint">Отдельных файлов пока нет. Ссылка на КП сохранится в брифе.</p>'),'Передать в проект',fd=>{
   const sold=String(fd.get('sold')||'').trim();
   if(!sold)throw Error('Напишите, что продали');
   client.handover={sold,kp:String(fd.get('kp')||'').trim(),amount:Number(fd.get('amount'))||0,due:String(fd.get('due')||'').trim(),contacts:String(fd.get('contacts')||'').trim(),kpLink:String(fd.get('kpLink')||'').trim(),files:fd.getAll('file'),at:new Date().toISOString(),by:u().id};
