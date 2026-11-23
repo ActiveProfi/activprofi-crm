@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {EventEmitter} = require('node:events');
 const net = require('node:net');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -46,6 +47,49 @@ function listen() {
   });
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({server, port: server.address().port, messages})));
 }
+
+test('AUTH LOGIN sends MAIL FROM before RCPT TO', async () => {
+  const commands = [];
+  const socket = new EventEmitter();
+  let senderGiven = false;
+  socket.write = (chunk) => {
+    const first = String(chunk).split('\r\n')[0];
+    commands.push(first);
+    const upper = first.toUpperCase();
+    let reply = '';
+    if (upper.startsWith('EHLO')) reply = '250-hello\r\n250 AUTH LOGIN';
+    else if (upper === 'AUTH LOGIN') reply = '334 VXNlcm5hbWU6';
+    else if (first === Buffer.from('crm').toString('base64')) reply = '334 UGFzc3dvcmQ6';
+    else if (first === Buffer.from('secret').toString('base64')) reply = '235 2.7.0 Authentication successful';
+    else if (upper.startsWith('MAIL FROM')) { senderGiven = true; reply = '250 2.1.0 Ok'; }
+    else if (upper.startsWith('RCPT TO')) reply = senderGiven ? '250 2.1.5 Ok' : '503 sender not yet given';
+    else if (upper === 'DATA') reply = '354 End data with <CR><LF>.<CR><LF>';
+    else if (String(chunk).includes('\r\n.\r\n')) reply = '250 2.0.0 Ok queued';
+    else if (upper === 'QUIT') reply = '221 bye';
+    if (reply) socket.emit('data', Buffer.from(reply.endsWith('\r\n') ? reply : reply + '\r\n'));
+    return true;
+  };
+  socket.end = () => {};
+  socket.destroy = () => {};
+  const live = createSmtp({
+    settings: mailSettings({SMTP_HOST: 'smtp.mail.ru', SMTP_PORT: '465', SMTP_SECURE: '1', SMTP_USER: 'crm', SMTP_PASS: 'secret', SMTP_FROM: 'crm@studio.test', SMTP_FROM_NAME: 'Студия'}),
+    connect: () => socket,
+  });
+  const pending = live.send({to: 'anna@example.test', subject: 'Счёт', text: 'Здравствуйте'});
+  socket.emit('data', Buffer.from('220 smtp.mail.ru ready\r\n'));
+  await pending;
+  assert.deepEqual(commands.slice(0, 7), [
+    'EHLO activprofi',
+    'AUTH LOGIN',
+    Buffer.from('crm').toString('base64'),
+    Buffer.from('secret').toString('base64'),
+    'MAIL FROM:<crm@studio.test>',
+    'RCPT TO:<anna@example.test>',
+    'DATA',
+  ]);
+  assert.match(commands[7], /^From:/);
+  assert.equal(commands.at(-1), 'QUIT');
+});
 
 test('SMTP delivery reaches a local server and rejects a missing setup', async () => {
   assert.equal(mailSettings({}).configured, false);
