@@ -377,8 +377,9 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     return {unread: current.unread, byProject: current.byProject};
   }
 
-  async function send(user, chatId, text) {
-    assertSee(user, chatId);
+  async function send(user, chatId, text, options = {}) {
+    if (!options.known) assertSee(user, chatId);
+    else if (!chatById(String(chatId))) throw new HttpError(404, 'Бот ещё не видел этот чат');
     const body = String(text || '').trim();
     if (!body) throw new HttpError(400, 'Введите сообщение');
     if (body.length > 3500) throw new HttpError(400, 'Сообщение длиннее 3500 символов');
@@ -438,7 +439,7 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     if (timer) clearTimeout(timer);
   }
 
-  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, file, seedDemo, start, stop, memory, canSeeChat};
+  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, sendKnownChat: (user, chatId, text) => send(user, chatId, text, {known: true}), file, seedDemo, start, stop, memory, canSeeChat};
 }
 
 module.exports = {createTelegram, createMemoryMock, maskToken, cleanTelegramLogin, GROUP_TYPES};

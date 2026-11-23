@@ -12,8 +12,23 @@ const {M} = require('./models.cjs');
 const service = require('./service.cjs');
 const {ensureBoot} = require('./bootstrap.cjs');
 const {createTelegram} = require('./telegram.cjs');
+const {mailSettings, createSmtp} = require('./mail.cjs');
+const outbound = require('./outbound.cjs');
 
 const telegramByDb = new WeakMap();
+
+function currentMailer(cfg) {
+  const smtp = cfg.smtp || {};
+  return createSmtp({settings: mailSettings({
+    SMTP_HOST: smtp.host || '',
+    SMTP_PORT: smtp.port || '',
+    SMTP_SECURE: smtp.secure || '',
+    SMTP_USER: smtp.user || '',
+    SMTP_PASS: smtp.pass || '',
+    SMTP_FROM: smtp.from || '',
+    SMTP_FROM_NAME: smtp.fromName || '',
+  })});
+}
 
 const root = path.join(__dirname, '..', 'variant-b');
 const types = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon'};
@@ -445,6 +460,15 @@ async function route(req, res, db, cfg) {
       const body = await readJson(req, 8 * 1024);
       return send(res, 200, bot.askLink(session.user, body.scope, body.projectId));
     }
+    if (pathname === '/api/telegram/client-send' && method === 'POST') {
+      const body = await readJson(req, 32 * 1024);
+      try {
+        return send(res, 200, await outbound.sendTelegram(db, session.user, bot, body));
+      } catch (error) {
+        if (error.payload) return send(res, error.status || 400, {error: error.message, ...error.payload});
+        throw error;
+      }
+    }
     if (pathname === '/api/telegram/messages' && method === 'GET') return send(res, 200, {messages: bot.messages(session.user, url.searchParams.get('chatId'))});
     if (pathname === '/api/telegram/messages' && method === 'POST') {
       const body = await readJson(req, 32 * 1024);
@@ -465,6 +489,27 @@ async function route(req, res, db, cfg) {
       if (!bot.memory) throw new HttpError(404, 'Не найдено');
       if (session.user.role !== 'admin') throw new HttpError(403, 'Только администратор');
       return send(res, 200, {sent: bot.memory.sent});
+    }
+  }
+
+  if (pathname === '/api/mail' && method === 'GET') {
+    requireUser(db, req);
+    const settings = currentMailer(cfg).settings;
+    return send(res, 200, {configured: settings.configured, from: settings.configured ? settings.from : '', fromName: settings.fromName});
+  }
+  if (pathname === '/api/mail/test' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 8 * 1024);
+    return send(res, 200, await outbound.testMail(session.user, currentMailer(cfg), body));
+  }
+  if (pathname === '/api/mail/send' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 64 * 1024);
+    try {
+      return send(res, 200, await outbound.sendEmail(db, session.user, currentMailer(cfg), body));
+    } catch (error) {
+      if (error.payload) return send(res, error.status || 400, {error: error.message, ...error.payload});
+      throw error;
     }
   }
 
