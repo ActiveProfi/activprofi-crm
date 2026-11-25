@@ -25,7 +25,8 @@ function canProject(s,u,id){const p=project(s,id);return !!p&&has(s,u,'projects.
 function canAssign(s,u,id){return canProject(s,u,id)&&has(s,u,'tasks.assign')}
 function canManage(s,u,id){return canProject(s,u,id)&&has(s,u,'projects.manage')}
 function visibleProjects(s,u){return s.projects.filter(p=>canProject(s,u,p.id))}
-function visibleClients(s,u){if(has(s,u,'clients.all'))return s.clients;return s.clients.filter(c=>has(s,u,'clients.own')&&c.ownerId===u.id||has(s,u,'clients.project')&&c.project&&canProject(s,u,c.project))}
+function onProbation(u){return !!(u&&u.role!=='admin'&&u.probation===true)}
+function visibleClients(s,u){if(onProbation(u))return s.clients.filter(c=>c.ownerId===u.id);if(has(s,u,'clients.all'))return s.clients;return s.clients.filter(c=>has(s,u,'clients.own')&&c.ownerId===u.id||has(s,u,'clients.project')&&c.project&&canProject(s,u,c.project))}
 function visibleTasks(s,u){return has(s,u,'tasks.view')?s.tasks.filter(t=>canProject(s,u,t.projectId)&&(has(s,u,'tasks.all')||t.assigneeId===u.id)):[]}
 function canTask(s,u,t){return has(s,u,'tasks.edit')&&canProject(s,u,t.projectId)&&(canManage(s,u,t.projectId)||canAssign(s,u,t.projectId)||t.assigneeId===u.id)}
 function canClient(s,u,c){return visibleClients(s,u).some(x=>x.id===c.id)}
@@ -92,5 +93,5 @@ function normalizeProjectTeam(users,actor,project,previous){
  if(members.some(id=>!list.some(user=>user&&user.id===id)))throw Error('Участник проекта не найден');
  return {leaderId,pmId,members};
 }
-const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,stage,risk,progress,addTask,updateTask,moveClient,addStage,report,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
+const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,onProbation,stage,risk,progress,addTask,updateTask,moveClient,addStage,report,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
 })(globalThis);

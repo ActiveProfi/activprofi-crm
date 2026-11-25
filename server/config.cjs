@@ -24,6 +24,7 @@ function config() {
     databasePath: process.env.DATABASE_PATH || path.resolve(process.cwd(), 'data', 'crm.sqlite'),
     sessionDays: Math.min(90, Math.max(1, Number(process.env.SESSION_DAYS || 14))),
     cookieSecure: process.env.COOKIE_SECURE === '1',
+    trustProxy: process.env.TRUST_PROXY === '1',
     adminLogin: process.env.ADMIN_LOGIN || '',
     adminPassword: process.env.ADMIN_PASSWORD || '',
     adminName: process.env.ADMIN_NAME || 'Администратор',
