@@ -17,6 +17,8 @@ const outbound = require('./outbound.cjs');
 const {createSipuni} = require('./sipuni.cjs');
 const kp = require('./kp.cjs');
 const pitch = require('./pitch.cjs');
+const {assertExposure, clientIp, cookieIsSecure} = require('./exposure.cjs');
+const {createLoginGuard, LOCK_MESSAGE} = require('./login-guard.cjs');
 
 const telegramByDb = new WeakMap();
 const sipuniByDb = new WeakMap();
@@ -36,12 +38,12 @@ function currentMailer(cfg) {
 
 const root = path.join(__dirname, '..', 'variant-b');
 const types = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon'};
-const fails = new Map();
+const loginGuard = createLoginGuard();
 let dummyHash = '';
 
-function cookie(token, cfg, clear = false) {
+function cookie(token, cfg, clear = false, secure = false) {
   const parts = [`ap_session=${clear ? '' : encodeURIComponent(token)}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${clear ? 0 : cfg.sessionDays * 86400}`];
-  if (cfg.cookieSecure) parts.push('Secure');
+  if (secure) parts.push('Secure');
   return parts.join('; ');
 }
 
@@ -104,20 +106,6 @@ function assertBrowser(req) {
   let host = '';
   try { host = new URL(origin).host; } catch { throw new HttpError(403, 'Запрос отклонён'); }
   if (host !== req.headers.host) throw new HttpError(403, 'Запрос отклонён');
-}
-
-function tooMany(key) {
-  const now = Date.now();
-  const row = fails.get(key) || {n: 0, at: now};
-  if (now - row.at > 15 * 60 * 1000) { row.n = 0; row.at = now; }
-  fails.set(key, row);
-  return row.n >= 20;
-}
-
-function markFail(key) {
-  const row = fails.get(key) || {n: 0, at: Date.now()};
-  row.n += 1;
-  fails.set(key, row);
 }
 
 function auth(db, req) {
@@ -185,24 +173,45 @@ async function route(req, res, db, cfg) {
   if (pathname === '/api/auth/login' && method === 'POST') {
     const body = await readJson(req, 32 * 1024);
     const login = String(body.login || '').trim().toLowerCase();
-    const ip = req.socket.remoteAddress || '';
-    if (tooMany(ip + ':' + login)) throw new HttpError(429, 'Слишком много попыток. Подождите и попробуйте снова.');
+    const ip = clientIp(req, cfg);
+    if (loginGuard.status(ip, login).locked) throw new HttpError(429, LOCK_MESSAGE);
     const found = store.findUserByLogin(db, login);
     const hash = found?.password_hash || (dummyHash ||= hashPassword('not-a-real-password'));
     const ok = verifyPassword(body.password || '', hash) && !!found;
     if (!ok) {
-      markFail(ip + ':' + login);
+      loginGuard.fail(ip, login);
       throw new HttpError(401, 'Неверный логин или пароль');
     }
-    fails.delete(ip + ':' + login);
+    loginGuard.success(login);
     db.run('DELETE FROM sessions WHERE expires_at <= ?', new Date().toISOString());
     const token = store.createSession(db, found.id, cfg.sessionDays);
-    return send(res, 200, {user: store.publicUser(found.user)}, {'Set-Cookie': cookie(token, cfg)});
+    return send(res, 200, {user: store.publicUser(found.user)}, {'Set-Cookie': cookie(token, cfg, false, cookieIsSecure(req, cfg))});
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
     store.deleteSession(db, readCookie(req, 'ap_session'));
-    return send(res, 200, {ok: true}, {'Set-Cookie': cookie('', cfg, true)});
+    return send(res, 200, {ok: true}, {'Set-Cookie': cookie('', cfg, true, cookieIsSecure(req, cfg))});
+  }
+
+  if (pathname === '/api/auth/password' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 32 * 1024);
+    const next = String(body.password || '');
+    const current = String(body.currentPassword || '');
+    if (next.length < 8) throw new HttpError(400, 'Новый пароль — не короче 8 символов');
+    if (next === current) throw new HttpError(400, 'Новый пароль должен отличаться от текущего');
+    const saved = db.transaction(() => {
+      const state = store.load(db);
+      const actor = state.users.find(item => item.id === session.user.id);
+      if (!actor) throw new HttpError(401, 'Нужно войти');
+      const row = store.findUserByLogin(db, actor.login);
+      if (!row || !verifyPassword(current, row.password_hash)) throw new HttpError(400, 'Текущий пароль не подошёл');
+      actor.mustChangePassword = false;
+      store.save(db, state, {passwords: {[actor.id]: hashPassword(next)}, dropSessionsFor: [actor.id], keepSession: session.user.sessionHash, keepUserId: actor.id});
+      store.bump(db);
+      return store.publicUser(actor);
+    });
+    return send(res, 200, {user: saved});
   }
 
   if (pathname === '/api/auth/me' && method === 'GET') {
@@ -673,7 +682,9 @@ function handler(db, cfg, req, res) {
 
 function start(overrides = {}) {
   const cfg = {...config(), ...overrides};
-  if (!Number.isFinite(cfg.port)) cfg.port = 3212;
+  const exposure = assertExposure(cfg);
+  cfg.host = exposure.host;
+  cfg.port = exposure.port;
   const db = openDatabase(cfg.databasePath);
   migrate(db);
   ensureBoot(db, cfg);
@@ -699,7 +710,7 @@ function start(overrides = {}) {
     server.listen(cfg.port, cfg.host, () => {
       const port = server.address().port;
       resolve({
-        server, db, cfg: {...cfg, port}, port, telegram, sipuni,
+        server, db, cfg: {...cfg, port}, port, telegram, sipuni, exposure,
         url: `http://${cfg.host}:${port}`,
         close() {
           telegram.stop();

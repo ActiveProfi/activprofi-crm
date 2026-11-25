@@ -268,6 +268,7 @@ function importDump(db, user, body) {
         item.login = fallbackLogin(item.login || item.id, used);
         const password = 'Tmp-' + crypto.randomBytes(9).toString('base64url');
         passwords[item.id] = hashPassword(password);
+        item.mustChangePassword = true;
         temporaryPasswords.push({id: item.id, name: item.name, login: item.login, password});
       }
     }

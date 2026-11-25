@@ -60,7 +60,13 @@ function present(state, user) {
   const clientIds = new Set(clients.map(client => client.id));
   const tasks = M.visibleTasks(view, user).map(task => structuredClone(task));
   const manageLeads = M.has(view, user, 'leads.manage');
-  const batches = (view.leadBatches || []).filter(batch => manageLeads || clients.some(client => client.batchId === batch.id)).map(batch => structuredClone(batch));
+  const batches = (view.leadBatches || []).filter(batch => manageLeads || clients.some(client => client.batchId === batch.id)).map(batch => {
+    const copy = structuredClone(batch);
+    if (M.onProbation(user)) {
+      for (const key of ['funnelTotal', 'funnelSent', 'funnelLoads', 'skipped', 'lastDistribution']) delete copy[key];
+    }
+    return copy;
+  });
   const communications = (view.communications || []).filter(item => {
     try { return Communications.allowed(view, user, item.entityType, item.entityId); }
     catch { return false; }
@@ -161,6 +167,8 @@ function applyUsers(state, actor, presented, incoming, secrets) {
       runDomain(() => Access.setUser(state, actor, change.user.id, input));
       const saved = state.users.find(item => item.id === change.user.id);
       saved.login = login;
+      saved.mustChangePassword = true;
+      saved.probation = saved.role !== 'admin' && (change.user.probation === true || (change.user.probation !== false && ['sales', 'sales_intern'].includes(saved.role)));
       secrets.accepted[change.user.id] = password;
     } else {
       const profileChanged = !same(change.before, change.user);
@@ -179,6 +187,12 @@ function applyUsers(state, actor, presented, incoming, secrets) {
       if (secrets.passwords[change.user.id]) {
         if (secrets.passwords[change.user.id].length < 8) throw new HttpError(400, 'Пароль — не короче 8 символов');
         secrets.accepted[change.user.id] = secrets.passwords[change.user.id];
+        const savedUser = state.users.find(item => item.id === change.user.id);
+        if (savedUser && change.user.id !== actor.id) savedUser.mustChangePassword = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(change.user, 'probation')) {
+        const savedUser = state.users.find(item => item.id === change.user.id);
+        if (savedUser) savedUser.probation = savedUser.role !== 'admin' && change.user.probation === true;
       }
       if (Object.prototype.hasOwnProperty.call(change.user, 'telegram')) {
         const raw = String(change.user.telegram || '').trim().replace(/^@/, '');
@@ -307,7 +321,7 @@ function applyClients(state, user, presented, incoming) {
     if (!before) {
       if (state.clients.some(item => item.id === id)) throw new HttpError(403, 'Нет доступа к клиенту');
       if (!M.has(state, user, 'clients.edit')) throw new HttpError(403, 'Добавление клиентов недоступно');
-      const created = {...client, id, ownerId: M.has(state, user, 'leads.manage') ? (client.ownerId || '') : user.id};
+      const created = {...client, id, ownerId: M.has(state, user, 'leads.manage') && !M.onProbation(user) ? (client.ownerId || '') : user.id};
       if (!String(created.name || '').trim()) throw new HttpError(400, 'Заполните имя');
       if (created.amount != null && (!Number.isFinite(Number(created.amount)) || Number(created.amount) < 0)) throw new HttpError(400, 'Некорректная сумма');
       created.amount = Number(created.amount) || 0;
@@ -325,7 +339,7 @@ function applyClients(state, user, presented, incoming) {
     if (same(before, client)) continue;
     const current = state.clients.find(item => item.id === id);
     if (!current || !M.canClient(state, user, current) || !M.has(state, user, 'clients.edit')) throw new HttpError(403, 'Нет доступа к клиенту');
-    if ((client.ownerId || '') !== (current.ownerId || '') && !M.has(state, user, 'leads.manage')) throw new HttpError(403, 'Назначать менеджера может руководитель отдела или админ');
+    if ((client.ownerId || '') !== (current.ownerId || '') && (!M.has(state, user, 'leads.manage') || M.onProbation(user))) throw new HttpError(403, 'Назначать менеджера может руководитель отдела или админ');
     if (client.project && client.project !== current.project && !M.canProject(state, user, client.project)) throw new HttpError(403, 'Нет доступа к проекту');
     if (!client.inLeadBase && client.stageId) {
       const pipeline = state.pipelines.find(item => item.id === client.pipelineId);
@@ -333,7 +347,7 @@ function applyClients(state, user, presented, incoming) {
     }
     if (!String(client.name || '').trim()) throw new HttpError(400, 'Заполните имя');
     const nextClient = {...client, id, amount: Number(client.amount) || 0};
-    if (!M.has(state, user, 'leads.manage')) nextClient.ownerId = current.ownerId || '';
+    if (!M.has(state, user, 'leads.manage') || M.onProbation(user)) nextClient.ownerId = current.ownerId || '';
     assertContactShape(nextClient);
     forgetClient(index, current);
     rememberClient(index, nextClient);
@@ -349,7 +363,7 @@ function applyClients(state, user, presented, incoming) {
 function applyBatches(state, user, presented, incoming) {
   const prev = indexById(presented.leadBatches, 'база');
   const next = indexById(incoming.leadBatches, 'база');
-  const can = M.has(state, user, 'leads.manage');
+  const can = M.has(state, user, 'leads.manage') && !M.onProbation(user);
   for (const [id, batch] of next) {
     const before = prev.get(id);
     if (!before) {

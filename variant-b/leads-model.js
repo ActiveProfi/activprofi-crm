@@ -11,7 +11,7 @@ aliases.email.push('эл почта (email) компании','эл почта',
 const splitContacts=v=>String(v||'').split(/[\n;,]+/).map(v=>v.trim()).filter(Boolean);
 const phone=v=>{let n=String(v??'').replace(/\D/g,'');return n.length===11&&n[0]==='8'?'7'+n.slice(1):n};
 const category=u=>(!u.permissionsUntil||u.permissionsUntil>=new Date().toISOString().slice(0,10))&&u.assignmentCategory?u.assignmentCategory:u.role;
-const isSales=u=>!!categories[category(u)],canImport=(u,s={})=>M.has(s,u,'leads.manage');
+const isSales=u=>!!categories[category(u)],canImport=(u,s={})=>M.has(s,u,'leads.manage')&&!M.onProbation(u);
 const socialFields={socials:'Соцсети — ссылки на профили',telegram:'Telegram',vk:'ВКонтакте',instagram:'Instagram',whatsapp:'WhatsApp',ok:'Одноклассники'};
 Object.assign(fields,socialFields);Object.assign(aliases,{socials:['соцсети','социальные сети','соц сети','профиль','ссылка на профиль','ссылка','social','socials','social media','контакты'],telegram:['telegram','телеграм','телеграмм','tg','тг'],vk:['vk','вк','вконтакте','vkontakte'],instagram:['instagram','инстаграм','инстаграмм','inst'],whatsapp:['whatsapp','ватсап','ватсапп','вотсап'],ok:['ok','одноклассники','ок']});
 function socialLinks(data){
@@ -273,11 +273,13 @@ function promoteBatch(s,u,batchId,pipelineId,stageId){
  return result;
 }
 function archiveBatch(s,u,batchId){
+ if(M.onProbation(u))throw Error('Новичку недоступны архив и удаление баз');
  const b=s.leadBatches.find(x=>x.id===batchId);if(!canTouchBatch(s,u,b))throw Error('База не найдена или недоступна');
  const progress=batchProgress(s,batchId);if(!progress.total||progress.left)throw Error('В архив уходит база, только когда в воронку перенесены все её контакты');
  b.archived=true;b.archivedAt=b.archivedAt||b.lastFunnelAt||nowStamp();b.funnelSent=progress.sent;b.funnelTotal=progress.total;return b;
 }
 function restoreBatch(s,u,batchId){
+ if(M.onProbation(u))throw Error('Новичку недоступны архив и удаление баз');
  const b=s.leadBatches.find(x=>x.id===batchId);if(!canTouchBatch(s,u,b))throw Error('База не найдена или недоступна');
  if(!b.archived)throw Error('База не в архиве');
  b.archived=false;b.restoredAt=nowStamp();return b;

@@ -22,3 +22,8 @@ input::placeholder,textarea::placeholder{color:#5b6f7d;opacity:1}.btn{border-col
 .login-card img{width:72px;height:auto}
 .migration-banner{margin:0 0 16px}
 .header-right .btn{margin-left:8px}
+.guide-step{padding:16px 18px;border-top:1px solid #c5d2db}
+.guide-step:first-child{border-top:0}
+.guide-step h2{margin-bottom:6px}
+.guide-step p{margin:0}
+#password-form .btn{margin-top:8px;margin-right:8px}

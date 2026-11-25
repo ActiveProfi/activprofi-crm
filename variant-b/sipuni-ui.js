@@ -38,6 +38,7 @@ function sipuniBanner() {
   if (!sipuniStatus.loaded) return '';
   const parts = [];
   if (!sipuniStatus.configured) parts.push('<div class="inbox-banner"><strong>Телефония не подключена — обратитесь к администратору.</strong></div>');
+  else if (!sipuniStatus.extension && (u().role === 'sales' || u().role === 'sales_intern')) parts.push('<div class="inbox-banner"><strong>Ваш внутренний номер Sipuni не указан.</strong> Попросите администратора вписать его в карточке сотрудника, поле «Внутренний номер Sipuni». Без него кнопка «Позвонить» не сработает.</div>');
   for (const item of sipuniStatus.missed) {
     parts.push(`<div class="inbox-banner"><strong>Пропущенный звонок: ${esc(item.name)}, ${esc(item.phone)}</strong> <button type="button" class="btn" data-action="sipuni-open" data-id="${esc(item.clientId)}">Открыть карточку</button></div>`);
   }

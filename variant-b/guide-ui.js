@@ -1,0 +1,36 @@
+function whenLabel(value){
+  if (!value) return 'время не указано';
+  const date = new Date(String(value).length === 10 ? value + 'T12:00:00' : value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('ru-RU', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
+}
+function reminderItems(){
+  return vc().map(client => ({
+    id: client.id,
+    name: client.name,
+    company: client.company || '',
+    next: client.next || '',
+    when: client.when || '',
+    kind: M.stage(state, client)?.kind || 'open',
+    inLeadBase: !!client.inLeadBase,
+  }));
+}
+function sellerHome(){
+  const mine = vc();
+  const open = mine.filter(client => !client.inLeadBase && (M.stage(state, client)?.kind || 'open') === 'open');
+  const won = mine.filter(client => M.stage(state, client)?.kind === 'won');
+  const queue = ManagerGuide.contactQueue(reminderItems(), M.today());
+  const todayCount = queue.filter(item => item.tone === 'today' || item.tone === 'overdue').length;
+  const missing = queue.filter(item => item.tone === 'empty').length;
+  const shown = queue.slice(0, 8);
+  const novice = M.onProbation(u());
+  const phone = typeof sipuniBanner === 'function' ? sipuniBanner() : '';
+  const rows = shown.map(item => `<button class="client-row" data-action="client" data-id="${esc(item.id)}"><div><strong>${esc(item.name)}</strong><p>${esc(item.company || item.next || 'Откройте карточку и запишите, что сделать')}</p><small>${esc(item.label)} · ${esc(whenLabel(item.when))}</small></div><span class="chip ${item.tone === 'overdue' ? 'orange' : ''}">${esc(item.label)}</span></button>`).join('');
+  const list = rows || empty(mine.length ? 'На сегодня всё спокойно. Откройте клиента и назначьте следующий контакт, если разговор ещё впереди.' : 'Клиентов пока нет. Их передаст руководитель. Свой контакт можно добавить кнопкой «Добавить клиента».');
+  const more = queue.length > shown.length ? `<p class="hint">Ещё ${queue.length - shown.length}. Полный список — в разделе «Клиенты».</p>` : '';
+  return phone + (novice ? '<p class="hint">Вы новичок: видны только лиды, которые вам назначили. Чужие клиенты, вся база, загрузка и удаление файлов недоступны. Отметку снимает администратор.</p>' : '') + heading('Ваш рабочий день', 'Кому позвонить, что отправить и какой следующий шаг', action('Как работать', 'go-guide', '', true) + (M.has(state, u(), 'clients.edit') ? action('Добавить клиента', 'new-client') : '')) + `<div class="stats">${[['Мои клиенты', mine.length, 'clients'], ['Пора связаться', todayCount, 'clients'], ['Без следующего шага', missing, 'clients'], ['Успешные сделки', won.length, 'reports']].map(([label, value, target]) => `<button class="stat" data-go="${target}"><div class="stat-label">${label}</div><strong>${value}</strong><small>${label === 'Успешные сделки' ? 'Уже согласились' : 'Только ваши'}</small></button>`).join('')}</div><div class="grid-main"><section class="panel"><div class="panel-head"><h2>Кого не забыть</h2>${link('Все клиенты →', 'go-clients')}</div>${list}${more}</section><section class="panel"><div class="panel-head"><h2>Как пройти сделку</h2></div><div class="detail"><p>1. Позвоните или напишите.</p><p>2. Внизу карточки запишите итог и нажмите «Следующий контакт».</p><p>3. Если нужно предложение — соберите КП и презентацию.</p><p>4. Счёт и оплата записываются в карточку. Деньги идут через банк.</p><p>5. Когда клиент согласился, передайте сделку в проект.</p>${action('Открыть памятку', 'go-guide')}</div></section></div><div class="section-title"><h2>Сделки в работе</h2><span class="muted">${open.length} открытых · сумма ${money(open.reduce((sum, client) => sum + (+client.amount || 0), 0))}</span></div>` + (vp().length ? projectCards() : empty('Проектов пока нет. Они появляются, когда клиент соглашается и вы передаёте сделку в разработку.'));
+}
+function guideView(){
+  const novice = M.onProbation(u());
+  return heading('Как работать', 'Коротко: один день менеджера по шагам') + (novice ? '<p class="hint">Сейчас у вас отметка «Новичок». Вы видите только своих клиентов. Всю базу, чужие сделки, загрузку и удаление файлов откроет администратор, когда снимет отметку в карточке сотрудника.</p>' : '') + `<section class="panel"><div class="guide-step"><h2>1. Утро</h2><p>Откройте «Обзор». Там список, кому сегодня позвонить или написать. Пометка «Просрочено» стоит на том, срок чего уже прошёл.</p></div><div class="guide-step"><h2>2. Откуда берётся клиент</h2><p>Руководитель передаёт вам лид. Он появляется в «Клиентах» и в «Воронке». Чужие лиды не видны. Если клиента привели вы сами, нажмите «Добавить клиента» и заполните имя и телефон, почту или ссылку на профиль.</p></div><div class="guide-step"><h2>3. Звонок</h2><p>В карточке нажмите «Позвонить». Если написано, что внутренний номер Sipuni не указан, попросите администратора вписать его в вашей карточке сотрудника. Поле называется «Внутренний номер Sipuni». Без него кнопка звонка не сработает.</p></div><div class="guide-step"><h2>4. После разговора</h2><p>Внизу карточки напишите итог. Затем «Следующий контакт»: что сделать и когда. Эта запись появится на обзоре, чтобы вы не забыли.</p></div><div class="guide-step"><h2>5. Письмо</h2><p>Кнопка письма показывает, кому оно уйдёт. Если почта не подключена, клиент письмо не получит: напишите администратору. Черновик при этом можно сохранить.</p></div><div class="guide-step"><h2>6. КП и презентация</h2><p>«Собрать КП» — до трёх вариантов из прайса. Посмотрите предпросмотр и отправьте. «Собрать презентацию» — короткие слайды своими словами. Кнопка «Черновик от нейросети» пока ничего не пишет, её можно не трогать.</p></div><div class="guide-step"><h2>7. Счёт и оплата</h2><p>«Выставить счёт» сохраняет счёт в карточке. «Отметить оплату» записывает, что деньги пришли. Сами деньги идут через банк, не через эту кнопку. На карточке видно, сколько выставлено, сколько оплачено и сколько осталось.</p></div><div class="guide-step"><h2>8. Клиент согласился</h2><p>Переведите сделку на успешный этап. Откроется «Передать в проект»: что продали, сумма, срок и контакты. Дальше карточкой занимаются проджект и разработчики. Этап разработки менеджер не двигает.</p></div><div class="guide-step"><h2>9. Свои цифры</h2><p>Раздел «Отчёты» показывает ваши сделки, успех и сумму. Чужие результаты туда не попадают.</p></div><div class="guide-step"><h2>10. Пароль и первый вход</h2><p>Администратор называет вам временный пароль лично. При первом входе программа попросит придумать свой. Позже его можно сменить кнопкой «Сменить пароль» справа вверху. Пароль никому не пересылайте.</p></div></section>`;
+}

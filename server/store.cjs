@@ -204,7 +204,7 @@ function save(db, state, options = {}) {
 
 function publicUser(user) {
   if (!user) return null;
-  return {id: user.id, name: user.name, role: user.role, login: user.login || '', active: user.active !== false};
+  return {id: user.id, name: user.name, role: user.role, login: user.login || '', active: user.active !== false, mustChangePassword: user.mustChangePassword === true, probation: user.probation === true};
 }
 
 function createSession(db, userId, days) {
