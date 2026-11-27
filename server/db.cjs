@@ -326,6 +326,28 @@ function migrate(db) {
   `);
   const istok = db.get('SELECT id FROM schema_migrations WHERE id = ?', '008-istok');
   if (!istok) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '008-istok', new Date().toISOString());
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      ref_kind TEXT NOT NULL DEFAULT '',
+      ref_id TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      read_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
+    CREATE TABLE IF NOT EXISTS telegram_personal (
+      user_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL DEFAULT '',
+      code TEXT NOT NULL DEFAULT '',
+      linked_at TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  const notify = db.get('SELECT id FROM schema_migrations WHERE id = ?', '009-notify');
+  if (!notify) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '009-notify', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};

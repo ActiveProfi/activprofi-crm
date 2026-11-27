@@ -3,6 +3,7 @@ const {Leads} = require('./models.cjs');
 const store = require('./store.cjs');
 const {upgradeInPlace, workspacePayload} = require('./guard.cjs');
 const {HttpError} = require('./errors.cjs');
+const notify = require('./notify.cjs');
 
 // Тексты, которые видит сотрудник. Секретный ключ сюда не попадает.
 const OFF = 'Телефония не подключена — обратитесь к администратору';
@@ -156,7 +157,8 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
   }
 
   function applyCall(call) {
-    return db.transaction(() => {
+    let events = [];
+    const result = db.transaction(() => {
       const state = store.load(db);
       upgradeInPlace(state);
       const phone = normalizePhone(call.phone);
@@ -169,6 +171,7 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
       const clientId = client?.id || '';
       const ownerId = client?.ownerId || call.ownerId || '';
       const missed = call.direction === 'in' && call.status !== 'отвечен' && call.status !== 'идёт' && call.status !== 'заказан' ? 1 : 0;
+      const prior = db.get('SELECT missed FROM sipuni_calls WHERE call_id = ?', call.callId);
       if (call.replaces) db.run('DELETE FROM sipuni_calls WHERE call_id = ?', call.replaces);
       db.run(
         `INSERT INTO sipuni_calls (call_id, client_id, owner_id, direction, status, duration, record_id, record_url, phone, extension, missed, seen, at)
@@ -198,14 +201,25 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
         if (!known?.client_id) {
           const assignee = unknownAssignee(state, call.extension);
           db.run('INSERT INTO sipuni_unknown (phone, call_id, at, client_id, assignee) VALUES (?, ?, ?, ?, ?) ON CONFLICT(phone) DO UPDATE SET call_id = excluded.call_id, at = excluded.at, assignee = CASE WHEN sipuni_unknown.client_id = \'\' THEN excluded.assignee ELSE sipuni_unknown.assignee END', phone, call.callId, call.at || new Date().toISOString(), '', assignee);
+          if (missed && !prior?.missed) {
+            const event = notify.missedCall({ownerId: '', dutyUserId: assignee || state.desk?.dutyUserId || '', name: '', phone: showPhone(phone), clientId: ''});
+            if (event) events = [event];
+          }
         }
       }
+      if (client && missed && !prior?.missed) {
+        const event = notify.missedCall({ownerId: client.ownerId || '', dutyUserId: state.desk?.dutyUserId || '', name: client.name, phone: client.phone || showPhone(phone), clientId: client.id});
+        if (event) events = [event];
+      }
+      if (events.length) notify.insert(db, events);
       if (notes) {
         store.save(db, state);
         store.bump(db);
       }
       return {clientId, missed: Boolean(missed)};
     });
+    notify.deliver(db, events);
+    return result;
   }
 
   function putNote(client, call, displayPhone) {

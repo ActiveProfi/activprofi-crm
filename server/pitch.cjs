@@ -183,6 +183,10 @@ function addInvoice(db, user, body) {
   const note = clip(body.note, 300) || 'Оплата по сделке';
   return command(db, user, (state, actor) => {
     const client = ownClient(state, actor, body.clientId);
+    const deal = Math.round(Number(client.amount) || 0);
+    if (deal > 0 && amount > deal && body.confirmOver !== true && body.confirmOver !== '1') {
+      throw new HttpError(409, 'Счёт ' + amount + ' ₽ больше суммы сделки ' + deal + ' ₽. Подтвердите, если сумму всё равно нужно выставить.');
+    }
     client.payments = Array.isArray(client.payments) ? client.payments : [];
     const number = client.payments.filter(item => item.kind === 'invoice').length + 1;
     const pdf = renderBlocksPdf([

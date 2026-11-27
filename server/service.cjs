@@ -6,21 +6,26 @@ const {HttpError, domainError} = require('./errors.cjs');
 const {hashApiKey, newApiKey} = require('./passwords.cjs');
 const istok = require('./istok.cjs');
 const {normalizeDump, fallbackLogin} = require('./bootstrap.cjs');
+const notify = require('./notify.cjs');
 
 function command(db, user, fn) {
   let extra = {};
+  let events = [];
   const payload = db.transaction(() => {
     const state = store.load(db);
     upgradeInPlace(state);
+    const before = structuredClone(state);
     const actor = state.users.find(item => item.id === user.id);
     if (!actor) throw new HttpError(401, 'Пользователь не найден');
     extra = domainWrap(() => fn(state, actor)) || {};
     store.save(db, state);
+    events = notify.publish(db, before, state, actor.id);
     const revision = store.bump(db);
     const view = present(state, actor);
     view.revision = revision;
     return {revision, user: store.publicUser(actor), state: view};
   });
+  notify.deliver(db, events);
   return {...payload, ...extra};
 }
 
@@ -116,6 +121,15 @@ function fromIstok(raw) {
   };
 }
 
+function logTime(db, user, body) {
+  return command(db, user, (state, actor) => {
+    const entry = M.logTime(state, actor, body?.taskId, body);
+    const task = state.tasks.find(item => item.id === body.taskId);
+    if (task) task.recordRev = (Number(task.recordRev) || 1) + 1;
+    return {entry};
+  });
+}
+
 function ingestLeads(db, keyRow, body, cfg) {
   const list = Array.isArray(body) ? body : body?.leads;
   if (!Array.isArray(list)) throw new HttpError(400, 'Ожидается массив лидов или объект {"leads": [...]}');
@@ -126,6 +140,7 @@ function ingestLeads(db, keyRow, body, cfg) {
   const defaults = Array.isArray(body) ? {} : (body || {});
   const intoStage = Boolean(stageToken(defaults) || records.some(record => stageToken(record)));
   let summary = {received: records.length, created: 0, duplicates: 0, errors: 0, batchId: '', ids: [], deals: []};
+  let events = [];
   db.transaction(() => {
     const state = store.load(db);
     upgradeInPlace(state);
@@ -133,6 +148,7 @@ function ingestLeads(db, keyRow, body, cfg) {
     if (!admin) throw new HttpError(500, 'В системе нет администратора для приёма лидов');
     const pipelineId = clip(defaults.pipelineId, 80) || cfg.integrationPipelineId || state.pipelines.find(item => item.id === 'outbound')?.id || state.pipelines[0]?.id;
     if (!pipelineId) throw new HttpError(400, 'Не задана воронка для интеграции');
+    const before = structuredClone(state);
     if (intoStage) {
       const deals = domainWrap(() => Leads.acceptIntegrationDeals(state, records, {
         pipelineId,
@@ -153,6 +169,7 @@ function ingestLeads(db, keyRow, body, cfg) {
       };
       if (summary.ids.length === 1) summary.id = summary.ids[0];
       if (summary.created) {
+        events = notify.publish(db, before, state, '');
         store.save(db, state);
         store.bump(db);
       }
@@ -171,6 +188,7 @@ function ingestLeads(db, keyRow, body, cfg) {
       keyId: keyRow.id,
     }));
     if (summary.created || summary.updated) {
+      events = notify.publish(db, before, state, '');
       store.save(db, state);
       store.bump(db);
     }
@@ -182,6 +200,7 @@ function ingestLeads(db, keyRow, body, cfg) {
       createdAt: new Date().toISOString(),
     });
   });
+  notify.deliver(db, events);
   return summary;
 }
 
@@ -270,7 +289,7 @@ function importDump(db, user, body) {
 }
 
 module.exports = {
-  command, importLeads, groupBatch, distributeBatch, promoteBatch, archiveBatch, restoreBatch, ingestLeads,
+  command, importLeads, groupBatch, distributeBatch, promoteBatch, archiveBatch, restoreBatch, ingestLeads, logTime,
   createIntegrationKey, listIntegrationKeys, revokeIntegrationKey, findIntegrationKey, istok,
   exportDump, importDump,
 };

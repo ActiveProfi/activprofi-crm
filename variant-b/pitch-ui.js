@@ -22,7 +22,7 @@ function payTotals(client) {
   const rows = client.payments || [];
   const invoiced = rows.filter(item => item.kind === 'invoice').reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const paid = rows.filter(item => item.kind === 'payment').reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  return {invoiced, paid, left: Math.max(0, invoiced - paid)};
+  return {invoiced, paid, left: Math.max(0, invoiced - paid), balance: (Number(client?.amount) || 0) - paid};
 }
 
 function pitchSection(client) {
@@ -36,7 +36,7 @@ function paySection(client) {
   if (!client || !M.canClient(state, u(), client)) return '';
   const totals = payTotals(client);
   const rows = (client.payments || []).map(item => `<p>${item.kind === 'invoice' ? 'Счёт' : 'Оплата'} · ${esc(money(item.amount))} · ${esc((item.at || '').slice(0, 10))} · ${esc(item.note || '')}${item.fileId ? ` <a href="/api/pitch/files/${esc(item.fileId)}" target="_blank" rel="noopener">PDF</a>` : ''}</p>`).join('');
-  return `<section class="kp-card"><h3>Оплаты</h3><p>Сумма сделки ${esc(money(client.amount || 0))}. Выставлено ${esc(money(totals.invoiced))}. Оплачено ${esc(money(totals.paid))}. Остаток ${esc(money(totals.left))}.</p><p class="hint">Кнопки только записывают счёт и оплату в CRM. Деньги идут через банк.</p>${rows || '<p>Счетов и оплат пока нет.</p>'}<div class="actions">${action('Выставить счёт', 'pay-invoice', client.id)}${action('Отметить оплату', 'pay-mark', client.id)}</div></section>`;
+  return `<section class="kp-card" id="deal-balance"><h3>Оплаты</h3><p>Сумма сделки ${esc(money(client.amount || 0))}. Выставлено ${esc(money(totals.invoiced))}. Оплачено ${esc(money(totals.paid))}. Остаток по сделке ${esc(money(totals.balance))}.</p><p class="hint">Остаток — это сумма сделки минус уже оплаченное. Кнопки только записывают счёт и оплату в CRM. Деньги идут через банк.</p>${rows || '<p>Счетов и оплат пока нет.</p>'}<div class="actions">${action('Выставить счёт', 'pay-invoice', client.id)}${action('Отметить оплату', 'pay-mark', client.id)}</div></section>`;
 }
 
 function pitchRead() {
@@ -118,7 +118,12 @@ function payInvoice(id) {
   const client = state.clients.find(item => item.id === id);
   if (!client || !M.canClient(state, u(), client)) throw Error('Это не ваша сделка');
   modal('Выставить счёт', `<p class="hint">Счёт сохранится в карточке и в PDF. Деньги через CRM не проходят.</p>${field('Сумма', 'amount', client.amount || 0, 'number', true)}${area('Основание', 'note', client.kpChoice ? 'Вариант ' + client.kpChoice : 'Оплата по сделке')}`, 'Сохранить счёт', async fd => {
-    await pitchApi('/api/payments/invoice', {clientId: client.id, amount: fd.get('amount'), note: fd.get('note')});
+    const body = {clientId: client.id, amount: fd.get('amount'), note: fd.get('note')};
+    try { await pitchApi('/api/payments/invoice', body); }
+    catch (error) {
+      if (!/больше суммы сделки/.test(error.message) || !window.confirm(error.message)) throw error;
+      await pitchApi('/api/payments/invoice', {...body, confirmOver: true});
+    }
     toast('Счёт записан');
     return 'saved';
   });
