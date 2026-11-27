@@ -208,7 +208,27 @@ function selectionPool(state, actor, filter) {
   if (filter.batchId) pool = pool.filter(client => client.batchId === filter.batchId);
   if (filter.source) pool = pool.filter(client => client.source === filter.source);
   if (filter.lossReason) pool = pool.filter(client => client.lossReason === filter.lossReason);
+  if (!filter.includeWon) pool = pool.filter(client => M.stage(state, client)?.kind !== 'won');
   return pool.filter(client => !optedOut(client));
+}
+
+function previewSelection(db, user, body) {
+  const filter = {
+    stageId: clip(body?.stageId, 80),
+    batchId: clip(body?.batchId, 80),
+    source: clip(body?.source, 120),
+    ownerId: clip(body?.ownerId, 80),
+    lossReason: clip(body?.lossReason, 40),
+    includeWon: body?.includeWon === true || body?.includeWon === 1 || body?.includeWon === '1',
+  };
+  const state = store.load(db);
+  const actor = state.users.find(item => item.id === user.id);
+  if (!actor) throw new HttpError(401, 'Нужно войти');
+  const clients = selectionPool(state, actor, filter);
+  return {
+    count: clients.length,
+    people: clients.slice(0, 30).map(client => ({id: client.id, name: client.name, phone: client.phone || '', email: client.email || '', stage: client.stage || ''})),
+  };
 }
 
 function createSelection(db, user, body) {
@@ -220,6 +240,7 @@ function createSelection(db, user, body) {
     source: clip(body?.source, 120),
     ownerId: clip(body?.ownerId, 80),
     lossReason: clip(body?.lossReason, 40),
+    includeWon: body?.includeWon === true || body?.includeWon === 1 || body?.includeWon === '1',
   };
   return db.transaction(() => {
     const state = store.load(db);
@@ -363,6 +384,6 @@ function filteredExport(db, query) {
 }
 
 module.exports = {
-  SCOPES, CSV_COLUMNS, ingestBase, createSelection, listSelections, selectionExport, ackSelection,
+  SCOPES, CSV_COLUMNS, ingestBase, previewSelection, createSelection, listSelections, selectionExport, ackSelection,
   listNewSelections, filteredExport, optedOut, csvOf,
 };

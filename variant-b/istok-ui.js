@@ -42,13 +42,29 @@ async function mailingList() {
   render();
 }
 
+function mailingBody(includeWon) {
+  return {stageId: mailingStage, batchId: mailingBatch, source: mailingSource, ownerId: mailingOwner, lossReason: mailingLoss, includeWon: !!includeWon};
+}
+
+async function mailingPreview(includeWon) {
+  const response = await fetch('/api/mailing-selections/preview', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'ActivProfi'},
+    body: JSON.stringify(mailingBody(includeWon)),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Error(data.error || 'Не удалось собрать список');
+  return data;
+}
+
 async function mailingSend(batchId) {
   if (batchId) mailingBatch = batchId;
-  modal('Отправить в рассылку', '<p class="hint">В список попадут только клиенты, которых вы видите, по выбранным фильтрам. Кто отмечен «не писать и не звонить», не попадёт. Письма отсюда не уходят: список заберёт Исток.</p>' + field('Название выборки', 'name', 'Рассылка · ' + M.today(), 'text', true), 'Создать выборку', async fd => {
+  modal('Отправить в рассылку', '<p class="hint">Сначала список и число людей. Кто уже на этапе «В проекте», не попадает, пока не поставите галочку. Кто отмечен «не писать и не звонить», не попадает. Письма отсюда не уходят: список заберёт Исток.</p><label class="member-choice"><input type="checkbox" id="mailing-include-won"> Включить тех, кто уже «В проекте»</label><div id="mailing-preview"><p>Считаю список…</p></div>' + field('Название выборки', 'name', 'Рассылка · ' + M.today(), 'text', true), 'Создать выборку', async fd => {
+    const includeWon = !!document.querySelector('#mailing-include-won')?.checked;
     const response = await fetch('/api/mailing-selections', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Requested-With': 'ActivProfi'},
-      body: JSON.stringify({name: fd.get('name'), stageId: mailingStage, batchId: mailingBatch, source: mailingSource, ownerId: mailingOwner, lossReason: mailingLoss}),
+      body: JSON.stringify({name: fd.get('name'), ...mailingBody(includeWon)}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Error(data.error || 'Не удалось создать выборку');
@@ -56,6 +72,17 @@ async function mailingSend(batchId) {
     await loadSelections();
     mailingShowList = true;
   });
+  const box = document.querySelector('#mailing-include-won');
+  const paint = async () => {
+    const preview = document.querySelector('#mailing-preview');
+    if (!preview) return;
+    const data = await mailingPreview(!!box?.checked);
+    const lines = (data.people || []).map(person => `<p>${esc(person.name)} · ${esc(person.phone || person.email || person.stage || '')}</p>`).join('');
+    const more = data.count > (data.people || []).length ? `<p>И ещё ${data.count - data.people.length}.</p>` : '';
+    preview.innerHTML = `<p><b>${data.count}</b> контактов</p>${lines || '<p>По этому фильтру никого нет.</p>'}${more}`;
+  };
+  if (box) box.addEventListener('change', () => { paint().catch(error => toast(error.message)); });
+  paint().catch(error => toast(error.message));
 }
 
 function toggleSilence(id) {

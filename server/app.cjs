@@ -19,6 +19,7 @@ const kp = require('./kp.cjs');
 const pitch = require('./pitch.cjs');
 const {assertExposure, clientIp, cookieIsSecure} = require('./exposure.cjs');
 const {createLoginGuard, LOCK_MESSAGE} = require('./login-guard.cjs');
+const notify = require('./notify.cjs');
 
 const telegramByDb = new WeakMap();
 const sipuniByDb = new WeakMap();
@@ -495,6 +496,28 @@ async function route(req, res, db, cfg) {
     return send(res, 200, service.revokeIntegrationKey(db, session.user, decodeURIComponent(keyMatch[1])));
   }
 
+  if (pathname === '/api/notifications' && method === 'GET') {
+    const session = requireUser(db, req);
+    return send(res, 200, notify.list(db, session.user.id));
+  }
+  if (pathname === '/api/notifications/read' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, notify.markRead(db, session.user.id, await readJson(req, 8 * 1024)));
+  }
+  if (pathname === '/api/notifications/telegram' && method === 'POST') {
+    const session = requireUser(db, req);
+    const bot = telegramByDb.get(db);
+    notify.issueCode(db, session.user.id);
+    return send(res, 200, notify.linkStatus(db, session.user.id, bot?.botUsername?.() || ''));
+  }
+  if (pathname === '/api/tasks/time' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, service.logTime(db, session.user, await readJson(req, 16 * 1024)));
+  }
+  if (pathname === '/api/mailing-selections/preview' && method === 'POST') {
+    const session = requireUser(db, req);
+    return send(res, 200, service.istok.previewSelection(db, session.user, await readJson(req, 16 * 1024)));
+  }
   if (pathname === '/api/mailing-selections' && method === 'GET') {
     const session = requireUser(db, req);
     return send(res, 200, {selections: service.istok.listSelections(db, session.user)});
@@ -745,6 +768,10 @@ function start(overrides = {}) {
   ensureBoot(db, cfg);
   const telegram = createTelegram({db, M, store, fetchImpl: globalThis.fetch, envToken: cfg.telegramBotToken || '', mock: cfg.telegramMock === true || cfg.telegramMock === '1'});
   telegramByDb.set(db, telegram);
+  notify.setSender(db, (chatId, text) => {
+    if (!telegram.connected()) return;
+    return telegram.call('sendMessage', {chat_id: chatId, text});
+  });
   const sipuni = createSipuni({
     db, M,
     user: cfg.sipuniUser || '',

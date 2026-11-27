@@ -108,7 +108,7 @@ test('presentation and payments stay on the owner deal', async () => {
     assert.equal(sent.status, 200, JSON.stringify(sent.json));
     assert.match(sent.json.state.clients.find(client => client.id === '1').notes[0], /Отправлена презентация v1/);
     assert.match(mail.messages.join('\n'), /Deck-v1\.pdf/);
-    const invoice = await request(app.port, 'POST', '/api/payments/invoice', {cookie: elena, body: {clientId: '1', amount: 439000, note: 'Вариант Оптимальный'}});
+    const invoice = await request(app.port, 'POST', '/api/payments/invoice', {cookie: elena, body: {clientId: '1', amount: 439000, note: 'Вариант Оптимальный', confirmOver: true}});
     assert.equal(invoice.status, 200, JSON.stringify(invoice.json));
     assert.equal(invoice.json.totals.left, 439000);
     const paid = await request(app.port, 'POST', '/api/payments', {cookie: elena, body: {clientId: '1', amount: 200000, note: 'Предоплата'}});

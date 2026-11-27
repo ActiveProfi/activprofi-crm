@@ -1,6 +1,7 @@
 const {M, Access, Leads, Communications, Inbox, Delivery} = require('./models.cjs');
 const {contactKeys, assertContactShape} = require('./contacts.cjs');
 const {HttpError, domainError} = require('./errors.cjs');
+const notify = require('./notify.cjs');
 const store = require('./store.cjs');
 const {hashPassword} = require('./passwords.cjs');
 
@@ -70,6 +71,11 @@ function present(state, user) {
   const projects = M.visibleProjects(view, user).map(project => {
     const copy = structuredClone(project);
     if (!M.has(view, user, 'finance.view')) delete copy.budget;
+    const all = (view.tasks || []).filter(task => task.projectId === project.id);
+    const done = all.filter(task => task.status === 'Готово').length;
+    copy.completion = all.length ? Math.round(done / all.length * 100) : 0;
+    const mine = all.filter(task => task.assigneeId === user.id);
+    copy.myTasks = {done: mine.filter(task => task.status === 'Готово').length, total: mine.length};
     return copy;
   });
   const projectIds = new Set(projects.map(project => project.id));
@@ -550,9 +556,11 @@ function applyGoogle(state, user, incoming) {
 
 function saveRecords(db, user, items) {
   if (!Array.isArray(items) || !items.length) throw new HttpError(400, 'Нет изменений для сохранения');
-  return db.transaction(() => {
+  let events = [];
+  const result = db.transaction(() => {
     const state = store.load(db);
     upgradeInPlace(state);
+    const before = structuredClone(state);
     const actor = state.users.find(item => item.id === user.id);
     if (!actor) throw new HttpError(401, 'Пользователь не найден');
     const names = {client: 'clients', project: 'projects', task: 'tasks'};
@@ -582,16 +590,20 @@ function saveRecords(db, user, items) {
       const row = (state[names[change.kind]] || []).find(item => item.id === change.id);
       if (row) row.recordRev = fresh.has(change.id) ? 1 : (Number(row.recordRev) || 1) + 1;
     }
+    events = notify.publish(db, before, state, actor.id);
     store.save(db, state);
     const next = store.bump(db);
     const view = present(state, actor);
     view.revision = next;
     return {revision: next, user: store.publicUser(actor), state: view};
   });
+  notify.deliver(db, events);
+  return result;
 }
 
 function mergeWorkspace(db, user, revision, incoming) {
-  return db.transaction(() => {
+  let events = [];
+  const result = db.transaction(() => {
     const current = store.revision(db);
     if (Number(revision) !== current) throw new HttpError(409, 'Данные изменились на сервере. Обновите страницу и повторите действие.');
     const state = store.load(db);
@@ -627,10 +639,12 @@ function mergeWorkspace(db, user, revision, incoming) {
     applyGoogle(state, actor, clean.googleClientId);
     if (clean.desk && !same(state.desk, clean.desk)) {
       if (actor.role !== 'admin') throw new HttpError(403, 'Назначения по умолчанию меняет администратор');
+      const rate = Math.round(Number(clean.desk.hourRate) || 0);
       state.desk = {
         dutyUserId: String(clean.desk.dutyUserId || ''),
         defaultLeaderId: String(clean.desk.defaultLeaderId || ''),
         defaultPmId: String(clean.desk.defaultPmId || ''),
+        hourRate: rate > 0 ? rate : 0,
       };
     }
     const passwords = {};
@@ -639,6 +653,8 @@ function mergeWorkspace(db, user, revision, incoming) {
     // Сравнение через повторное чтение не нужно: сохраняем, если секреты или JSON состояния изменились.
     const changedState = JSON.stringify(stable(stripVolatile(state))) !== JSON.stringify(stable(stripVolatile(store.load(db))));
     if (changedState || Object.keys(passwords).length || dirty) {
+      const before = store.load(db);
+      events = notify.publish(db, before, state, actor.id);
       store.save(db, state, {passwords, dropSessionsFor: Object.keys(passwords), keepSession: user.sessionHash, keepUserId: actor.id});
       const next = store.bump(db);
       const view = present(state, actor);
@@ -647,6 +663,8 @@ function mergeWorkspace(db, user, revision, incoming) {
     }
     return {revision: current, user: store.publicUser(actor), state: presented};
   });
+  notify.deliver(db, events);
+  return result;
 }
 
 function stripVolatile(state) {

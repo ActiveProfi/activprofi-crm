@@ -1,4 +1,5 @@
 const {HttpError} = require('./errors.cjs');
+const notify = require('./notify.cjs');
 
 const GROUP_TYPES = new Set(['group', 'supergroup']);
 
@@ -153,6 +154,18 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
   }
 
   function applyUpdate(update) {
+    const message = update.message || update.edited_message;
+    if (message?.chat?.type === 'private') {
+      const text = String(message.text || '').trim();
+      const code = (text.match(/^(?:\/start\s+)?([A-Za-z0-9]{6,16})$/) || [])[1];
+      if (code && notify.linkByCode(db, code, message.chat.id)) {
+        try {
+          const result = call('sendMessage', {chat_id: message.chat.id, text: 'Готово. Уведомления из CRM будут приходить сюда.'});
+          if (result && typeof result.catch === 'function') result.catch(() => {});
+        } catch { /* бот не подключён — код всё равно можно привязать позже */ }
+      }
+      return null;
+    }
     if (update.my_chat_member?.chat) upsertChat(update.my_chat_member.chat);
     if (update.edited_message) return saveIncoming(update.edited_message, true);
     if (update.message) return saveIncoming(update.message, false);
@@ -459,7 +472,7 @@ function createTelegram({db, M, store, fetchImpl, envToken = '', mock = false}) 
     if (timer) clearTimeout(timer);
   }
 
-  return {token, connected, mask: () => maskToken(token()), call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, sendProject, sendKnownChat: (user, chatId, text) => send(user, chatId, text, {known: true}), file, seedDemo, start, stop, memory, canSeeChat};
+  return {token, connected, mask: () => maskToken(token()), botUsername: () => botUsername, call, pollOnce, applyUpdate, status, overview, setToken, visibleChats, linkChat, unlinkChat, askLink, messages, markRead, send, sendProject, sendKnownChat: (user, chatId, text) => send(user, chatId, text, {known: true}), file, seedDemo, start, stop, memory, canSeeChat};
 }
 
 module.exports = {createTelegram, createMemoryMock, maskToken, cleanTelegramLogin, GROUP_TYPES};

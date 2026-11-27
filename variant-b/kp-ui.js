@@ -109,7 +109,12 @@ function kpBuild(id) {
   modal('Собрать КП', `<div id="kp-editor"><p class="hint">До трёх вариантов рядом. Строки берутся из прайса или пишутся вручную. Нейросеть пока не заполняет текст — кнопка ниже только показывает, куда её подключат.</p>${area('Задача клиента', 'task', client.clientTask || client.description || '')}${area('Решение', 'solution', '')}${area('Этапы', 'stages', '1. Обследование\n2. Настройка\n3. Запуск')}${field('Общий срок', 'timeline', '', 'text')}${field('Ссылка на интерактивное КП', 'kpLink', client.kpLink || '', 'text')}<label class="field">Какой вариант выбран для передачи в проект<select name="choice">${names.map(name => `<option>${name}</option>`).join('')}</select></label><div class="kp-variants">${columns}</div><div class="actions"><button type="button" class="btn" id="kp-preview-btn">Предпросмотр</button></div><iframe class="kp-preview" id="kp-preview-frame" hidden title="Предпросмотр КП"></iframe></div>`, 'Сохранить версию', async () => {
     const documentKp = kpReadForm();
     if (!documentKp.variants.length) throw Error('Добавьте хотя бы один вариант с услугой');
-    const data = await kpApi('/api/kp/documents', {clientId: client.id, document: documentKp});
+    let data;
+    try { data = await kpApi('/api/kp/documents', {clientId: client.id, document: documentKp}); }
+    catch (error) {
+      if (!/изменит сумму сделки/.test(error.message) || !window.confirm(error.message)) throw error;
+      data = await kpApi('/api/kp/documents', {clientId: client.id, document: documentKp, confirmAmount: true});
+    }
     toast('Сохранена версия КП v' + ((data.state?.clients || []).find(item => item.id === client.id)?.proposals || []).at(-1)?.version);
     return 'saved';
   });

@@ -458,7 +458,7 @@ function ownClient(state, actor, clientId) {
   return client;
 }
 
-function rememberProposal(client, document, file) {
+function rememberProposal(client, document, file, options = {}) {
   client.proposals = Array.isArray(client.proposals) ? client.proposals : [];
   const version = client.proposals.reduce((max, item) => Math.max(max, Number(item.version) || 0), 0) + 1;
   const proposal = {
@@ -480,7 +480,14 @@ function rememberProposal(client, document, file) {
   client.kpVariants = 'Выбран вариант ' + variantSummary({variants: document.variants.filter(item => item.name === document.choice)}) + '. Все варианты: ' + variantSummary(document);
   client.kpLink = document.kpLink || client.kpLink || '';
   const chosen = document.variants.find(item => item.name === document.choice);
-  if (chosen) client.amount = variantMath(chosen).total;
+  if (chosen) {
+    const nextAmount = variantMath(chosen).total;
+    const current = Math.round(Number(client.amount) || 0);
+    if (nextAmount !== current && !options.confirmAmount) {
+      throw new HttpError(409, 'КП изменит сумму сделки с ' + rub(current) + ' на ' + rub(nextAmount) + '. Подтвердите сохранение.');
+    }
+    client.amount = nextAmount;
+  }
   return proposal;
 }
 
@@ -494,7 +501,7 @@ function saveDocument(db, user, body) {
     const id = 'kpf-' + crypto.randomBytes(6).toString('hex');
     const name = 'KP-v' + ((client.proposals || []).reduce((max, item) => Math.max(max, Number(item.version) || 0), 0) + 1) + '.pdf';
     db.run('INSERT INTO kp_files (id, client_id, name, mime, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, client.id, name, 'application/pdf', pdf, new Date().toISOString());
-    proposal = rememberProposal(client, document, {id, name});
+    proposal = rememberProposal(client, document, {id, name}, {confirmAmount: body.confirmAmount === true || body.confirmAmount === '1'});
     return {proposalId: proposal.id};
   });
   return {...saved, proposalId: proposal.id, html: renderHtml(template, saved.state.clients.find(item => item.id === body.clientId) || {}, document)};
