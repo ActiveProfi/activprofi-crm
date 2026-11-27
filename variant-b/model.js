@@ -27,8 +27,9 @@ function canManage(s,u,id){return canProject(s,u,id)&&has(s,u,'projects.manage')
 function visibleProjects(s,u){return s.projects.filter(p=>canProject(s,u,p.id))}
 function onProbation(u){return !!(u&&u.role!=='admin'&&u.probation===true)}
 function visibleClients(s,u){if(onProbation(u))return s.clients.filter(c=>c.ownerId===u.id);if(has(s,u,'clients.all'))return s.clients;return s.clients.filter(c=>has(s,u,'clients.own')&&c.ownerId===u.id||has(s,u,'clients.project')&&c.project&&canProject(s,u,c.project))}
-function visibleTasks(s,u){return has(s,u,'tasks.view')?s.tasks.filter(t=>canProject(s,u,t.projectId)&&(has(s,u,'tasks.all')||t.assigneeId===u.id)):[]}
-function canTask(s,u,t){return has(s,u,'tasks.edit')&&canProject(s,u,t.projectId)&&(canManage(s,u,t.projectId)||canAssign(s,u,t.projectId)||t.assigneeId===u.id)}
+function isSalesTask(t){return !!(t&&t.clientId&&!t.projectId)}
+function visibleTasks(s,u){return (s.tasks||[]).filter(t=>{if(isSalesTask(t)||t.support){const client=(s.clients||[]).find(item=>item.id===t.clientId);if(client&&canClient(s,u,client))return true}return has(s,u,'tasks.view')&&canProject(s,u,t.projectId)&&(has(s,u,'tasks.all')||t.assigneeId===u.id)})}
+function canTask(s,u,t){if(isSalesTask(t)){const client=(s.clients||[]).find(item=>item.id===t.clientId);return !!client&&has(s,u,'clients.edit')&&canClient(s,u,client)}return has(s,u,'tasks.edit')&&canProject(s,u,t.projectId)&&(canManage(s,u,t.projectId)||canAssign(s,u,t.projectId)||t.assigneeId===u.id)}
 function canClient(s,u,c){return visibleClients(s,u).some(x=>x.id===c.id)}
 function stage(s,c){return s.pipelines.find(p=>p.id===c.pipelineId)?.stages.find(t=>t.id===c.stageId)}
 function risk(tasks,day=today()){
@@ -42,6 +43,23 @@ function progress(s,u,id){const ts=projectTasks(s,id);return ts.length?Math.roun
 function ownTaskShare(s,u,id){const ts=projectTasks(s,id).filter(t=>t.assigneeId===u.id);return {done:ts.filter(t=>t.status==='Готово').length,total:ts.length}}
 function memberOk(s,projectId,userId){if(!userId)return true;const p=project(s,projectId);return !!p&&(p.members.includes(userId)||userId==='admin')}
 function addTask(s,u,input){
+ if(input.support){
+  const client=(s.clients||[]).find(item=>item.id===input.clientId);
+  if(!client||!canClient(s,u,client))throw Error('Нет доступа к клиенту');
+  const p=project(s,client.project);
+  if(!p)throw Error('Сначала передайте сделку в проект');
+  const text=String(input.text||input.description||input.title||'').replace(/^Заявка:\s*/,'').trim();
+  if(!text)throw Error('Напишите, что случилось');
+  const t={id:uid(),projectId:p.id,clientId:client.id,title:('Заявка: '+text).slice(0,180),description:text,due:input.due||today(),start:today(),status:'В очереди',assigneeId:p.pmId||p.leaderId||'',createdBy:u.id,createdAt:today(),estimate:1,remaining:1,type:'work',support:true,sourceId:input.sourceId||'',timeEntries:[],reviewerId:''};
+  s.tasks.push(t);return t;
+ }
+ if(input.clientId&&!input.projectId){
+  const client=(s.clients||[]).find(item=>item.id===input.clientId);
+  if(!client||!has(s,u,'clients.edit')||!canClient(s,u,client))throw Error('Нет доступа к клиенту');
+  if(!String(input.title||'').trim()||!input.due)throw Error('Заполните название и срок');
+  const t={id:uid(),clientId:client.id,projectId:'',title:String(input.title).trim(),due:input.due,start:input.start||today(),status:'В очереди',kind:input.kind==='todo'?'todo':'task',assigneeId:input.assigneeId||client.ownerId||u.id,createdBy:u.id,createdAt:today(),estimate:0,remaining:0,type:'work',description:input.description||'',timeEntries:[],reviewerId:''};
+  s.tasks.push(t);return t;
+ }
  if(!has(s,u,'tasks.create')||!canProject(s,u,input.projectId))throw Error('Нет доступа к проекту');
  if(!input.title?.trim()||!input.due)throw Error('Заполните название и срок');
  if(input.start&&input.start>input.due)throw Error('Начало не может быть позже срока');
@@ -53,6 +71,7 @@ function addTask(s,u,input){
  const t={...input,id:uid(),title:input.title.trim(),assigneeId:input.assigneeId||'',reviewerId:input.reviewerId||'',status:'В очереди',createdBy:u.id,createdAt:today(),estimate:+input.estimate,remaining:+input.remaining,timeEntries:Array.isArray(input.timeEntries)?input.timeEntries:[]};s.tasks.push(t);return t;
 }
 function updateTask(s,u,id,patch){const t=s.tasks.find(t=>t.id===id);if(!t||!canTask(s,u,t))throw Error('Нет доступа к задаче');
+ if(isSalesTask(t)){if(patch.status&&!statuses.includes(patch.status))throw Error('Неизвестный статус');if('title'in patch&&!String(patch.title||'').trim())throw Error('Введите название');Object.assign(t,patch);if(t.status==='Готово')t.completedAt=today();return t}
  if('assigneeId' in patch&&patch.assigneeId!==t.assigneeId){if(!canAssign(s,u,t.projectId))throw Error('Назначать исполнителя могут только админ и руководитель проекта');if(patch.assigneeId&&!project(s,t.projectId).members.includes(patch.assigneeId)&&patch.assigneeId!=='admin')throw Error('Исполнитель должен участвовать в проекте')}
  if('reviewerId' in patch&&(patch.reviewerId||'')!==(t.reviewerId||'')){if(!canAssign(s,u,t.projectId)&&!canManage(s,u,t.projectId))throw Error('Проверяющего назначает руководитель проекта');if(patch.reviewerId&&!memberOk(s,t.projectId,patch.reviewerId))throw Error('Проверяющий должен участвовать в проекте')}
  if(patch.projectId&&patch.projectId!==t.projectId)throw Error('Проект существующей задачи менять нельзя');
@@ -146,5 +165,5 @@ function tidyWorkspace(state){
  for(const project of state.projects||[])if(project.status&&project.devStage){delete project.status;dirty=true}
  return dirty;
 }
-const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,onProbation,stage,risk,progress,ownTaskShare,addTask,updateTask,logTime,loggedHours,moveClient,addStage,report,dealParts,clientMoney,paymentReport,projectPaid,salesSnapshot,tidyWorkspace,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
+const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,onProbation,stage,risk,progress,ownTaskShare,addTask,updateTask,logTime,loggedHours,moveClient,addStage,report,dealParts,clientMoney,paymentReport,projectPaid,salesSnapshot,tidyWorkspace,isSalesTask,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
 })(globalThis);
