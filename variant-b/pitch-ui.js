@@ -29,7 +29,7 @@ function pitchSection(client) {
   if (!client || !M.canClient(state, u(), client)) return '';
   const decks = client.decks || [];
   const rows = decks.map(item => `<p><b>v${item.version}</b> · ${esc(item.title)} · ${esc((item.createdAt || '').slice(0, 10))} <a href="/api/pitch/files/${esc(item.fileId)}" target="_blank" rel="noopener">PDF</a></p>`).join('');
-  return `<section class="kp-card"><h3>Презентация</h3>${rows || '<p>Презентаций пока нет.</p>'}<div class="actions">${action('Собрать презентацию', 'pitch-build', client.id, true)}${decks.length ? action('Отправить презентацию', 'pitch-send', client.id) : ''}${action('Черновик от нейросети', 'pitch-suggest', client.id)}</div></section>`;
+  return `<section class="kp-card"><h3>Презентация</h3>${rows || '<p>Презентаций пока нет.</p>'}<div class="actions">${action('Собрать презентацию', 'pitch-build', client.id, true)}${decks.length ? action('Отправить презентацию', 'pitch-send', client.id) : ''}</div></section>`;
 }
 
 function paySection(client) {

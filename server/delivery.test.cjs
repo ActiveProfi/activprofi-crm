@@ -199,11 +199,13 @@ test('won deal becomes a project; developers see only their tasks, leads stay pr
     assert.ok(alexeyTasks.json.tasks.every(task => task.assigneeId === 'dev2'));
     assert.equal((await request(app.port, 'GET', '/api/tasks/' + annaId, {cookie: alexey})).status, 404);
 
-    for (const cookie of [pavel, dmitry, admin]) {
+    for (const cookie of [pavel, admin]) {
       const tasks = await request(app.port, 'GET', '/api/tasks', {cookie});
       assert.ok(tasks.json.tasks.some(task => task.id === annaId));
       assert.ok(tasks.json.tasks.some(task => task.id === alexeyId));
     }
+    const pmTasks = await request(app.port, 'GET', '/api/tasks', {cookie: dmitry});
+    assert.equal(pmTasks.json.tasks.some(task => task.id === annaId), false);
 
     const blocked = await request(app.port, 'PATCH', '/api/projects/' + project.id, {
       cookie: anna,
@@ -222,7 +224,7 @@ test('won deal becomes a project; developers see only their tasks, leads stay pr
     }
     const finished = await request(app.port, 'GET', '/api/projects/' + project.id, {cookie: admin});
     assert.equal(finished.json.project.devStage, 'dev-support');
-    assert.equal(finished.json.project.status, 'Техподдержка');
+    assert.equal(finished.json.project.status, undefined);
     const devColumn = await request(app.port, 'GET', '/api/projects/' + project.id, {cookie: anna});
     assert.equal(devColumn.json.project.devStage, 'dev-support');
   } finally {

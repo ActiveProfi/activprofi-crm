@@ -156,12 +156,10 @@ test('bell, reviewer, time, balance, mailing preview and telegram link', async (
     assert.equal(M.clientMoney(card).balance, 45000);
 
     const kp = {task: 'Сайт', solution: 'Форма', stages: '1. Макет', timeline: 'неделя', choice: 'Старт', variants: [{name: 'Старт', duration: 'неделя', discount: 0, fromPrice: false, lines: [{name: 'Сайт', unit: 'проект', qty: 1, price: 70000}]}]};
-    const deniedKp = await request(app.port, 'POST', '/api/kp/documents', {cookie: elena, body: {clientId: '4', document: kp}});
-    assert.equal(deniedKp.status, 409);
-    assert.match(deniedKp.json.error, /изменит сумму/);
-    const savedKp = await request(app.port, 'POST', '/api/kp/documents', {cookie: elena, body: {clientId: '4', document: kp, confirmAmount: true}});
+    const savedKp = await request(app.port, 'POST', '/api/kp/documents', {cookie: elena, body: {clientId: '4', document: kp}});
     assert.equal(savedKp.status, 200, JSON.stringify(savedKp.json));
-    assert.equal(savedKp.json.state.clients.find(item => item.id === '4').amount, 70000);
+    assert.equal(savedKp.json.state.clients.find(item => item.id === '4').amount, 55000);
+    assert.equal(savedKp.json.state.clients.find(item => item.id === '4').kpChoice || '', '');
 
     const preview = await request(app.port, 'POST', '/api/mailing-selections/preview', {cookie: admin, body: {}});
     assert.equal(preview.status, 200, JSON.stringify(preview.json));

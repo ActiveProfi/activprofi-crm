@@ -62,7 +62,7 @@ test('Won deal becomes one project; head, PM and admin see all, developer sees o
   assert.throws(() => D.moveProject(state, user('anna'), project.id, 'dev-support'));
   D.moveProject(state, head, project.id, 'dev-r1');
   assert.equal(project.devStage, 'dev-r1');
-  assert.equal(project.status, '1 релиз');
+  assert.equal(project.status, undefined);
   D.moveProject(state, head, project.id, 'dev-support');
   assert.equal(project.devStage, 'dev-support');
   assert.equal(project.devHistory.at(-1).by, 'devhead');
