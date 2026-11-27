@@ -55,6 +55,27 @@ function readCookie(req, name) {
   return '';
 }
 
+function integrationKey(db, req, scope) {
+  const header = req.headers['x-api-key'] || '';
+  const bearer = String(req.headers.authorization || '').startsWith('Bearer ') ? String(req.headers.authorization).slice(7).trim() : '';
+  const key = service.findIntegrationKey(db, header || bearer);
+  if (!key) throw new HttpError(401, 'Неверный ключ интеграции');
+  if (key.scope !== scope) throw new HttpError(403, scope === 'export:read' ? 'Этим ключом нельзя забирать выборки' : 'Этим ключом нельзя принимать лиды');
+  return key;
+}
+
+function sendExport(res, exported) {
+  if (exported.kind === 'json') return send(res, 200, exported.body);
+  const body = Buffer.from(exported.body, 'utf8');
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Length': body.length,
+    'Content-Disposition': `attachment; filename="${exported.filename || 'export.csv'}"`,
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}
+
 function send(res, status, body, extra = {}) {
   const payload = Buffer.from(JSON.stringify(body));
   res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8', 'Content-Length': payload.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extra});
@@ -155,10 +176,28 @@ async function route(req, res, db, cfg) {
   if (pathname === '/api/integrations/leads' && method === 'POST') {
     const header = req.headers['x-api-key'] || '';
     const bearer = String(req.headers.authorization || '').startsWith('Bearer ') ? String(req.headers.authorization).slice(7).trim() : '';
-    const key = service.findIntegrationKey(db, header || bearer);
-    if (!key) throw new HttpError(401, 'Неверный ключ интеграции');
+    integrationKey(db, req, 'leads:write');
     const body = await readJson(req);
+    const key = service.findIntegrationKey(db, header || bearer);
     return send(res, 200, service.ingestLeads(db, key, body, cfg));
+  }
+
+  const selectionExport = pathname.match(/^\/api\/integrations\/selections\/([^/]+)(?:\/(ack))?$/);
+  if (pathname === '/api/integrations/selections' && method === 'GET') {
+    integrationKey(db, req, 'export:read');
+    return send(res, 200, {selections: service.istok.listNewSelections(db, url.searchParams.get('status') || 'new')});
+  }
+  if (pathname === '/api/integrations/export' && method === 'GET') {
+    integrationKey(db, req, 'export:read');
+    return sendExport(res, service.istok.filteredExport(db, Object.fromEntries(url.searchParams)));
+  }
+  if (selectionExport && !selectionExport[2] && method === 'GET') {
+    integrationKey(db, req, 'export:read');
+    return sendExport(res, service.istok.selectionExport(db, decodeURIComponent(selectionExport[1]), url.searchParams.get('format') || 'csv'));
+  }
+  if (selectionExport && selectionExport[2] === 'ack' && method === 'POST') {
+    integrationKey(db, req, 'export:read');
+    return send(res, 200, service.istok.ackSelection(db, decodeURIComponent(selectionExport[1])));
   }
 
   if (pathname === '/api/sipuni/event' && (method === 'GET' || method === 'POST')) {
@@ -442,12 +481,22 @@ async function route(req, res, db, cfg) {
   if (pathname === '/api/integration-keys' && method === 'POST') {
     const session = requireUser(db, req);
     const body = await readJson(req, 32 * 1024);
-    return send(res, 201, service.createIntegrationKey(db, session.user, body.name));
+    return send(res, 201, service.createIntegrationKey(db, session.user, body.name, body.scope));
   }
   const keyMatch = pathname.match(/^\/api\/integration-keys\/([^/]+)$/);
   if (keyMatch && method === 'DELETE') {
     const session = requireUser(db, req);
     return send(res, 200, service.revokeIntegrationKey(db, session.user, decodeURIComponent(keyMatch[1])));
+  }
+
+  if (pathname === '/api/mailing-selections' && method === 'GET') {
+    const session = requireUser(db, req);
+    return send(res, 200, {selections: service.istok.listSelections(db, session.user)});
+  }
+  if (pathname === '/api/mailing-selections' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req, 64 * 1024);
+    return send(res, 201, service.istok.createSelection(db, session.user, body));
   }
 
   if (pathname === '/api/migration/export' && method === 'GET') {

@@ -309,6 +309,21 @@ function migrate(db) {
   `);
   const pitch = db.get('SELECT id FROM schema_migrations WHERE id = ?', '007-pitch');
   if (!pitch) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '007-pitch', new Date().toISOString());
+  const keyColumns = db.all('PRAGMA table_info(integration_api_keys)').map(column => column.name);
+  if (!keyColumns.includes('scope')) db.exec("ALTER TABLE integration_api_keys ADD COLUMN scope TEXT NOT NULL DEFAULT 'leads:write'");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mailing_selections (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
+      taken_at TEXT NOT NULL DEFAULT '',
+      data TEXT NOT NULL
+    );
+  `);
+  const istok = db.get('SELECT id FROM schema_migrations WHERE id = ?', '008-istok');
+  if (!istok) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '008-istok', new Date().toISOString());
 }
 
 module.exports = {openDatabase, migrate, SCHEMA};
