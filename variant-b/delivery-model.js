@@ -71,26 +71,33 @@ function ensureFromWon(state,client,actorId){
   project.sourceClientId=project.sourceClientId||client.id;
   if(client.ownerId&&!(project.members||[]).includes(client.ownerId))project.members=[...(project.members||[]),client.ownerId];
   keepHandover(project,client);
+  const later=handoverBrief(client);
+  if(later?.sold&&(!project.description||project.description==='Сделка выиграна и передана в разработку.'))project.description=later.sold;
+  if(later?.due&&!project.due)project.due=later.due;
+  if((Number(later?.amount)||Number(client.amount))&&!Number(project.budget))project.budget=Number(later?.amount)||Number(client.amount)||0;
   return project;
  }
  const titleBase=String(client.company||client.name||'Новый заказчик').trim()||'Новый заказчик';
+ const briefNow=handoverBrief(client);
+ const desk=state.desk||{};
+ const emails=[client.email, ...(String(briefNow?.contacts||'').match(/[^\s,;]+@[^\s,;]+/g)||[])].map(value=>String(value||'').trim()).filter(Boolean);
  project={
   id:M.uid(),
   title:titleBase.startsWith('Проект')?titleBase:'Проект: '+titleBase,
   client:String(client.company||client.name||'Заказчик').trim()||'Заказчик',
-  description:'Сделка выиграна и передана в разработку.',
+  description:briefNow?.sold||'Сделка выиграна и передана в разработку.',
   type:'crm',
   status:stages[0].name,
   devStage:'dev-start',
   devHistory:[{at:new Date().toISOString(),stageId:'dev-start',by:actorId||'',reason:'Сделка выиграна'}],
-  leaderId:'',
-  pmId:'',
-  members:[...new Set([client.ownerId].filter(Boolean))],
+  leaderId:desk.defaultLeaderId||'',
+  pmId:desk.defaultPmId||'',
+  members:[...new Set([client.ownerId, desk.defaultLeaderId, desk.defaultPmId].filter(Boolean))],
   start:M.today(),
-  due:'',
-  budget:Number(client.amount)||0,
+  due:briefNow?.due||'',
+  budget:Number(briefNow?.amount)||Number(client.amount)||0,
   next:'Назначить команду и первые задачи',
-  recipients:[],
+  recipients:[...new Set(emails)].map(email=>({id:M.uid(),name:client.name||'Клиент',email})),
   board:{notes:[],links:[],comments:[]},
   mockup:{name:'',data:''},
   sourceClientId:client.id,

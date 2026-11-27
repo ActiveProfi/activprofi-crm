@@ -82,7 +82,7 @@ function sipuniLead(digits) {
   if (!M.has(state, u(), 'clients.edit')) throw Error('Создавать лиды может сотрудник с правом редактировать клиентов');
   const offer = sipuniStatus.unknown.find(item => item.digits === digits);
   const phone = offer?.phone || digits;
-  modal('Новый лид из звонка', `<p class="hint">Этого номера нет в базе. Лид будет вашим, другие менеджеры его не увидят.</p>` + field('Имя', 'name', '', 'text', true) + field('Телефон', 'phone', phone, 'tel', true), 'Создать лид', async fd => {
+  modal('Новый лид из звонка', `<p class="hint">Номер попадёт на первый этап воронки. Владелец — дежурный сотрудник, а не тот, кто успел нажать первым.</p>` + field('Имя', 'name', '', 'text', true) + field('Телефон', 'phone', phone, 'tel', true), 'Создать лид', async fd => {
     const data = await sipuniApi('/api/sipuni/lead', {phone: digits, name: fd.get('name'), confirmPhone: fd.get('phone')});
     if (data.state) adoptWorkspace(data);
     selected = data.clientId;
@@ -96,7 +96,8 @@ function sipuniLead(digits) {
 async function sipuniTest() {
   if (u().role !== 'admin') throw Error('Проверить телефонию может администратор');
   const data = await sipuniApi('/api/sipuni/test', {});
-  toast(data.message);
+  const key = data.eventKeySet ? 'Ключ событий задан.' : 'Ключ событий ещё не задан.';
+  toast(data.message + ' ' + key + ' В настройках сервера укажите SIPUNI_WEBHOOK_TOKEN и добавьте тот же ключ в адрес событий Sipuni как token. Сам ключ в CRM не показывается.');
 }
 
 setInterval(() => {

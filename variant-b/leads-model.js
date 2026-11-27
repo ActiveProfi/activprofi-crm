@@ -9,7 +9,7 @@ aliases.contactBundle=['сайты и соцсети','мессенджеры к
 aliases.phone.push('телефоны','телефоны компании (все)','телефон компании');
 aliases.email.push('эл почта (email) компании','эл почта','email компании');
 const splitContacts=v=>String(v||'').split(/[\n;,]+/).map(v=>v.trim()).filter(Boolean);
-const phone=v=>{let n=String(v??'').replace(/\D/g,'');return n.length===11&&n[0]==='8'?'7'+n.slice(1):n};
+const phone=v=>{let n=String(v??'').replace(/\D/g,'');if(n.length===11&&n[0]==='8')n='7'+n.slice(1);if(n.length===10&&n[0]==='9')n='7'+n;return n};
 const category=u=>(!u.permissionsUntil||u.permissionsUntil>=new Date().toISOString().slice(0,10))&&u.assignmentCategory?u.assignmentCategory:u.role;
 const isSales=u=>!!categories[category(u)],canImport=(u,s={})=>M.has(s,u,'leads.manage')&&!M.onProbation(u);
 const socialFields={socials:'Соцсети — ссылки на профили',telegram:'Telegram',vk:'ВКонтакте',instagram:'Instagram',whatsapp:'WhatsApp',ok:'Одноклассники'};
@@ -80,6 +80,13 @@ function acceptIntegrationDeals(state,records,opts){
   }
   const comment=String(record.comment||'').trim();
   const client={...row.data,id:M.uid(),pipelineId:pipeline.id,stageId:stage.id,stage:stage.name,inLeadBase:false,ownerId:'',batchId:'',project:'',createdAt:M.today(),dealDate:record.date||record.dealDate||M.today(),description:record.description||'',company:row.data.company||record.description||'',clientTask:record.clientTask||'',kpVariants:record.kpVariants||'',kpLink:record.kpLink||'',callAt:record.callAt||'',statusNote:record.statusNote||'',when:record.callAt||'',next:record.statusNote||'Связаться с клиентом',source:record.source||opts.source||'Интеграция',sourceComment:comment,notes:comment?[comment,...(row.data.notes||[]).filter(note=>note!==comment)]:(row.data.notes||[]),stageHistory:[{at:M.today(),stageId:stage.id,reason:'Создано по API'}]};
+  const managers=(state.users||[]).filter(user=>user.active!==false&&['sales','sales_intern'].includes(user.role));
+  if(managers.length){
+   const load=id=>(state.clients||[]).filter(item=>item.ownerId===id&&(item.inLeadBase||M.stage(state,item)?.kind==='open')).length;
+   managers.sort((a,b)=>load(a.id)-load(b.id)||a.id.localeCompare(b.id));
+   client.ownerId=managers[0].id;
+   client.awaitingManager=false;
+  }else{client.ownerId='';client.awaitingManager=true}
   state.clients.push(client);
   deals.push({id:client.id,name:client.name,status:'created'});
  });

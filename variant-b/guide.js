@@ -8,7 +8,8 @@ function contactQueue(items, today){
   const week = addDays(today, 7);
   const rows = [];
   for (const item of items || []) {
-    if (item.inLeadBase || item.kind === 'lost') continue;
+    if (item.kind === 'lost') continue;
+    if (item.inLeadBase && !item.owned) continue;
     const when = String(item.when || '');
     const day = when.slice(0, 10);
     if (when && day < today) rows.push({...item, tone: 'overdue', label: 'Просрочено'});

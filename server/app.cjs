@@ -7,7 +7,7 @@ const {openDatabase, migrate} = require('./db.cjs');
 const store = require('./store.cjs');
 const {hashPassword, verifyPassword} = require('./passwords.cjs');
 const {HttpError, domainError} = require('./errors.cjs');
-const {workspacePayload, mergeWorkspace} = require('./guard.cjs');
+const {workspacePayload, mergeWorkspace, saveRecords} = require('./guard.cjs');
 const {M} = require('./models.cjs');
 const service = require('./service.cjs');
 const {ensureBoot} = require('./bootstrap.cjs');
@@ -261,6 +261,12 @@ async function route(req, res, db, cfg) {
   if (pathname === '/api/workspace' && method === 'GET') {
     const session = requireUser(db, req);
     return send(res, 200, workspacePayload(db, session.user));
+  }
+
+  if (pathname === '/api/records' && method === 'POST') {
+    const session = requireUser(db, req);
+    const body = await readJson(req);
+    return send(res, 200, saveRecords(db, session.user, body.items));
   }
 
   if (pathname === '/api/workspace' && method === 'PUT') {

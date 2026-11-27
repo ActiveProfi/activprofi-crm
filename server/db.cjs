@@ -284,6 +284,8 @@ function migrate(db) {
   `);
   const sipuni = db.get('SELECT id FROM schema_migrations WHERE id = ?', '005-sipuni');
   if (!sipuni) db.run('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', '005-sipuni', new Date().toISOString());
+  const unknownColumns = db.all('PRAGMA table_info(sipuni_unknown)').map(column => column.name);
+  if (unknownColumns.length && !unknownColumns.includes('assignee')) db.exec("ALTER TABLE sipuni_unknown ADD COLUMN assignee TEXT NOT NULL DEFAULT ''");
   db.exec(`
     CREATE TABLE IF NOT EXISTS kp_files (
       id TEXT PRIMARY KEY,
