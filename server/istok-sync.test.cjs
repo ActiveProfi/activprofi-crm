@@ -112,6 +112,13 @@ test('Istok updates an existing card, keeps the stage, and exports a selection b
     assert.equal(quiet.status, 201);
     assert.equal(foreign.status, 201);
     const ninaCookie = await login(app.port, 'nina', 'nina-pass-1');
+    const blockedMail = await request(app.port, 'POST', '/api/mailing-selections', {cookie: ninaCookie, body: {name: 'Рассылка Нины', source: 'Исток', ownerId: 'sales'}});
+    assert.equal(blockedMail.status, 403);
+    const lifted = await request(app.port, 'GET', '/api/workspace', {cookie: admin});
+    const draft = structuredClone(lifted.json.state);
+    draft.users.find(user => user.login === 'nina').probation = false;
+    const savedPeople = await request(app.port, 'PUT', '/api/workspace', {cookie: admin, body: {revision: lifted.json.revision, state: draft}});
+    assert.equal(savedPeople.status, 200, JSON.stringify(savedPeople.json));
     const selection = await request(app.port, 'POST', '/api/mailing-selections', {cookie: ninaCookie, body: {name: 'Рассылка Нины', source: 'Исток', ownerId: 'sales'}});
     assert.equal(selection.status, 201, JSON.stringify(selection.json));
     assert.equal(selection.json.count, 1);

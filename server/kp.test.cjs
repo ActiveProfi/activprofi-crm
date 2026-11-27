@@ -112,13 +112,13 @@ test('manager saves and sends only her own КП; admin owns the price list', asy
     assert.equal(seen.json.catalogue[0].price, 126000);
     const foreign = await request(app.port, 'POST', '/api/kp/documents', {cookie: oleg, body: {clientId: '1', document: documentKp}});
     assert.equal(foreign.status, 403);
-    const saved = await request(app.port, 'POST', '/api/kp/documents', {cookie: elena, body: {clientId: '1', document: documentKp, confirmAmount: true}});
+    const saved = await request(app.port, 'POST', '/api/kp/documents', {cookie: elena, body: {clientId: '1', document: documentKp}});
     assert.equal(saved.status, 200, JSON.stringify(saved.json));
     const anna = saved.json.state.clients.find(client => client.id === '1');
     assert.equal(anna.proposals.length, 1);
     assert.equal(anna.proposals[0].version, 1);
-    assert.equal(anna.kpChoice, 'Оптимальный');
-    assert.equal(anna.amount, 439000);
+    assert.equal(anna.kpChoice || '', '');
+    assert.equal(anna.amount, 170000);
     assert.match(anna.kpVariants, /Оптимальный/);
     const file = await request(app.port, 'GET', '/api/kp/files/' + anna.proposals[0].fileId, {cookie: elena});
     assert.equal(file.status, 200);

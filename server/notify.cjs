@@ -66,6 +66,9 @@ function plan(before, after, actorId) {
     if (owner && owner !== (prev?.ownerId || '')) {
       push(events, {userId: owner, kind: 'lead-assigned', title: 'Вам назначен лид', body: client.name || 'Лид', refKind: 'client', refId: client.id}, actorId);
     }
+    if (client.upsellAt && client.upsellAt !== prev?.upsellAt && owner) {
+      push(events, {userId: owner, kind: 'upsell', title: 'Пора предложить допродажу', body: client.name || 'Клиент', refKind: 'client', refId: client.id}, actorId);
+    }
   }
   return events;
 }

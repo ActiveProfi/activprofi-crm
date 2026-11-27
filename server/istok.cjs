@@ -224,6 +224,7 @@ function previewSelection(db, user, body) {
   const state = store.load(db);
   const actor = state.users.find(item => item.id === user.id);
   if (!actor) throw new HttpError(401, 'Нужно войти');
+  if (M.onProbation(actor)) throw new HttpError(403, 'Новичок не собирает рассылки и выборки');
   const clients = selectionPool(state, actor, filter);
   return {
     count: clients.length,
@@ -249,6 +250,7 @@ function createSelection(db, user, body) {
     if (!M.has(state, actor, 'clients.own') && !M.has(state, actor, 'clients.all') && actor.role !== 'admin') {
       throw new HttpError(403, 'Выборку собирает менеджер или администратор');
     }
+    if (M.onProbation(actor)) throw new HttpError(403, 'Новичок не собирает рассылки и выборки');
     const clients = selectionPool(state, actor, filter);
     if (!clients.length) throw new HttpError(400, 'В выборке никого нет. Проверьте фильтр и отметку «не писать и не звонить».');
     const id = crypto.randomUUID();

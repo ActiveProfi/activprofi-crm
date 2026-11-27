@@ -1,7 +1,7 @@
 (function(root){
 const Access=root.CRMAccess||(typeof require==='function'?require('./assets/access-model.js'):null);
 const has=(s,u,k)=>Access.has(s,u,k);
-const roles={admin:'Админ',leader:'Руководитель проекта',sales:'Менеджер 1 категории',sales_intern:'Менеджер-стажёр',rop:'РОП — руководитель отдела продаж',pm:'Проджект-менеджер',dev_head:'Начальник разработки',developer:'Разработчик'};
+const roles={admin:'Админ',sales:'Менеджер',rop:'РОП — руководитель отдела продаж',pm:'Проджект',dev_head:'Руководитель разработки',developer:'Разработчик'};
 const uid=()=>globalThis.crypto?.randomUUID?.()||'id-'+Date.now()+'-'+Math.random().toString(36).slice(2);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Vladivostok',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const statuses=['В очереди','В работе','На проверке','Готово'];
@@ -21,7 +21,7 @@ function migrate(old){
  return {schema:2,users,pipelines:[pipeline,outbound],projects,clients,tasks,materials,messages:[],outbox:[]};
 }
 function project(s,id){return s.projects.find(p=>p.id===String(id))}
-function canProject(s,u,id){const p=project(s,id);return !!p&&has(s,u,'projects.view')&&(has(s,u,'projects.all')||(u.role==='leader'&&(!p.leaderId||p.leaderId===u.id))||(u.role!=='leader'&&p.members.includes(u.id)))}
+function canProject(s,u,id){const p=project(s,id);if(!p||!has(s,u,'projects.view'))return false;if(has(s,u,'projects.all'))return true;if(p.leaderId===u.id||p.pmId===u.id||(p.members||[]).includes(u.id))return true;return (u.role==='pm'||u.role==='leader')&&!p.leaderId}
 function canAssign(s,u,id){return canProject(s,u,id)&&has(s,u,'tasks.assign')}
 function canManage(s,u,id){return canProject(s,u,id)&&has(s,u,'projects.manage')}
 function visibleProjects(s,u){return s.projects.filter(p=>canProject(s,u,p.id))}
@@ -75,7 +75,7 @@ function shiftDay(day,delta){const date=new Date(String(day).slice(0,10)+'T00:00
 function salesSnapshot(s,u,extras={}){const day=extras.today||today();const month=day.slice(0,7);const clients=visibleClients(s,u);const alive=client=>{const kind=stage(s,client)?.kind;return kind!=='won'&&kind!=='lost'};const waiting=clients.filter(client=>!client.ownerId&&alive(client));const overdue=clients.filter(client=>client.ownerId&&client.when&&String(client.when).slice(0,10)<day&&alive(client));const since=extras.istokSince||shiftDay(day,-7);const istok=clients.filter(client=>/исток/i.test(client.source||'')&&String(client.createdAt||'').slice(0,10)>=since);const funnels=(s.pipelines||[]).map(pipe=>({id:pipe.id,name:pipe.name,stages:(pipe.stages||[]).map(item=>{const list=clients.filter(client=>!client.inLeadBase&&client.stageId===item.id);return {id:item.id,name:item.name,kind:item.kind,count:list.length,amount:list.reduce((sum,client)=>sum+(Number(client.amount)||0),0)}})}));const monthClients=clients.filter(client=>!client.inLeadBase&&String(client.createdAt||'').startsWith(month));const parts=dealParts(s,monthClients);const paid=clients.reduce((sum,client)=>sum+(client.payments||[]).filter(item=>item.kind==='payment'&&String(item.at||'').slice(0,7)===month).reduce((inner,item)=>inner+(Number(item.amount)||0),0),0);return {waiting,overdue,istok,funnels,month:parts,paid,missed:extras.missed||[]}}
 function report(s,u,filter={}){const ps=visibleProjects(s,u);let ts=visibleTasks(s,u),pool=visibleClients(s,u).filter(c=>!c.inLeadBase);if(filter.project){ts=ts.filter(t=>t.projectId===filter.project);pool=pool.filter(c=>c.project===filter.project)}let cs=pool;if(filter.from)cs=cs.filter(c=>c.createdAt>=filter.from);if(filter.to)cs=cs.filter(c=>c.createdAt<=filter.to);const parts=dealParts(s,cs);return {projects:ps.filter(p=>!filter.project||p.id===filter.project),tasks:ts,clients:cs,won:parts.won,lost:parts.lost,conversion:cs.length?parts.won.length/cs.length*100:0,total:cs.reduce((a,c)=>a+(+c.amount||0),0),openTotal:parts.openTotal,wonTotal:parts.wonTotal,lostTotal:parts.lostTotal,risk:risk(ts,filter.today),finance:has(s,u,'finance.view'),sales:has(s,u,'sales.analytics'),payments:paymentReport(pool,filter.from,filter.to)}}
 // Руководитель: админ, руководитель проекта или начальник разработки. Проджект: проджект-менеджер, админ или начальник разработки.
-const leaderRoles=['admin','leader','dev_head'];
+const leaderRoles=['admin','leader','pm','dev_head'];
 const managerRoles=['pm','admin','dev_head'];
 const teamRoleHint='Нет сотрудников с нужной ролью — добавьте их в разделе «Команда и роли»';
 const teamFallbackHint=teamRoleHint+'. Сейчас можно выбрать админа или начальника разработки.';
@@ -84,7 +84,7 @@ function userLabel(user){return (user?.name||'Не назначен')+' · '+(ro
 function projectLeaderChoices(users){return (users||[]).filter(user=>activeUser(user)&&leaderRoles.includes(user.role))}
 function projectManagerChoices(users){return (users||[]).filter(user=>activeUser(user)&&managerRoles.includes(user.role))}
 function projectMemberChoices(users){return (users||[]).filter(user=>user&&user.role!=='admin')}
-function projectTeamHint(people,kind){const list=people||[];if(kind==='members')return list.length?'':teamRoleHint;const dedicated=kind==='leader'?'leader':'pm';if(!list.length)return teamRoleHint;if(!list.some(user=>user.role===dedicated))return teamFallbackHint;return ''}
+function projectTeamHint(people,kind){const list=people||[];if(kind==='members')return list.length?'':teamRoleHint;if(!list.length)return teamRoleHint;if(kind==='leader'&&!list.some(user=>user.role==='pm'||user.role==='leader'))return teamFallbackHint;if(kind==='pm'&&!list.some(user=>user.role==='pm'))return teamFallbackHint;return ''}
 function normalizeProjectTeam(users,actor,project,previous){
  const list=users||[];
  const explicitLeader=String(project?.leaderId||'').trim();
@@ -107,5 +107,44 @@ function normalizeProjectTeam(users,actor,project,previous){
  if(members.some(id=>!list.some(user=>user&&user.id===id)))throw Error('Участник проекта не найден');
  return {leaderId,pmId,members};
 }
-const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,onProbation,stage,risk,progress,ownTaskShare,addTask,updateTask,logTime,loggedHours,moveClient,addStage,report,dealParts,clientMoney,paymentReport,projectPaid,salesSnapshot,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
+const keptFromLeader=['finance.view','sales.analytics','pipelines.manage','clients.project','clients.edit','inbox.clients'];
+function tidyWorkspace(state){
+ let dirty=false;
+ state.users=state.users||[];
+ state.rolePermissions=state.rolePermissions||{};
+ if(!state.rolesTidyVersion){
+  const pmGrants=new Set([...(typeof Access!=='undefined'&&Access?.base?Object.entries(Access.base(state,'pm')).filter(([,on])=>on).map(([key])=>key):[])]);
+  for(const user of state.users){
+   if(user.role==='sales_intern'){user.role='sales';user.probation=true;dirty=true}
+   if(user.role==='leader'){
+    const overrides={...(user.permissionOverrides||{})};
+    for(const key of keptFromLeader)if(overrides[key]===undefined&&!pmGrants.has(key))overrides[key]=true;
+    user.permissionOverrides=overrides;
+    user.role='pm';
+    dirty=true;
+   }
+  }
+  const rename={'первый контакт':'Контакт','согласование':'Предложение','база клиентов':'Новый'};
+  for(const pipe of state.pipelines||[]){
+   for(const stage of pipe.stages||[]){
+    const next=rename[String(stage.name||'').trim().toLowerCase()];
+    if(!next||stage.name===next)continue;
+    stage.name=next;
+    for(const client of state.clients||[])if(client.stageId===stage.id)client.stage=next;
+    dirty=true;
+   }
+   if(!(pipe.stages||[]).some(stage=>stage.kind==='done'||stage.name==='Сдан')){
+    const won=(pipe.stages||[]).findIndex(stage=>stage.kind==='won');
+    const stage={id:'done-'+pipe.id,name:'Сдан',kind:'done'};
+    if(won>=0)pipe.stages.splice(won+1,0,stage);else (pipe.stages||[]).push(stage);
+    dirty=true;
+   }
+  }
+  state.rolesTidyVersion=1;
+  dirty=true;
+ }
+ for(const project of state.projects||[])if(project.status&&project.devStage){delete project.status;dirty=true}
+ return dirty;
+}
+const api={has,roles,statuses,uid,today,migrate,project,canProject,canAssign,canManage,canTask,canClient,visibleProjects,visibleTasks,visibleClients,onProbation,stage,risk,progress,ownTaskShare,addTask,updateTask,logTime,loggedHours,moveClient,addStage,report,dealParts,clientMoney,paymentReport,projectPaid,salesSnapshot,tidyWorkspace,userLabel,leaderRoles,managerRoles,projectLeaderChoices,projectManagerChoices,projectMemberChoices,projectTeamHint,normalizeProjectTeam,teamRoleHint};if(typeof module!=='undefined')module.exports=api;root.CRMModel=api;
 })(globalThis);

@@ -62,6 +62,7 @@ function upgradeInPlace(state) {
     state.pmRightsVersion = 1;
   }
   state.desk = state.desk || {dutyUserId: '', defaultLeaderId: '', defaultPmId: ''};
+  M.tidyWorkspace(state);
   return JSON.stringify(state) !== before;
 }
 

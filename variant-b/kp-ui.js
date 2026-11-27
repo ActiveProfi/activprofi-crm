@@ -37,7 +37,7 @@ function kpSection(client) {
   const rows = versions.map(item => `<p><b>v${item.version}</b> · ${esc((item.createdAt || '').slice(0, 10))} · ${esc(item.choice || '')} <a href="/api/kp/files/${esc(item.fileId)}" target="_blank" rel="noopener">PDF</a></p>`).join('');
   const link = String(client.kpLink || '').trim();
   const linkHtml = link ? `<p>Интерактивное КП: ${/^https?:\/\//i.test(link) ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link)}</a>` : esc(link)}</p>` : '<p>Ссылка на интерактивное КП не указана. Её можно добавить при сборке.</p>';
-  return `<section class="kp-card"><h3>КП</h3>${rows || '<p>Версий пока нет. Соберите первую.</p>'}${linkHtml}<div class="actions">${action('Собрать КП', 'kp-build', client.id, true)}${versions.length ? action('Отправить КП', 'kp-send', client.id) : ''}${action('Черновик от нейросети', 'kp-suggest', client.id)}</div></section>`;
+  return `<section class="kp-card"><h3>КП</h3>${rows || '<p>Версий пока нет. Соберите первую.</p>'}${linkHtml}<div class="actions">${action('Собрать КП', 'kp-build', client.id, true)}${versions.length ? action('Отправить КП', 'kp-send', client.id) : ''}</div></section>`;
 }
 
 function kpServiceOptions(selected) {

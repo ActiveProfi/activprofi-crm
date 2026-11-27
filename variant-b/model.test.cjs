@@ -19,11 +19,11 @@ test('Project leader and manager choices, empty hints, and saved team',()=>{
  assert.equal(kept.pmId,'');
  assert.deepEqual(kept.members,['a1']);
  const staff=[...admins,{id:'l',name:'Мария',role:'leader'},{id:'h',name:'Павел',role:'dev_head'},{id:'p',name:'Дмитрий',role:'pm'},{id:'d',name:'Анна',role:'developer'},{id:'s',name:'Елена',role:'sales'},{id:'old',name:'Архив',role:'leader',active:false}];
- assert.deepEqual(M.projectLeaderChoices(staff).map(user=>user.id),['a1','a2','l','h']);
+ assert.deepEqual(M.projectLeaderChoices(staff).map(user=>user.id),['a1','a2','l','h','p']);
  assert.deepEqual(M.projectManagerChoices(staff).map(user=>user.id),['a1','a2','h','p']);
  assert.ok(M.projectMemberChoices(staff).some(user=>user.id==='d'));
  assert.equal(M.projectMemberChoices(staff).some(user=>user.role==='admin'),false);
- assert.equal(M.userLabel(staff.find(user=>user.id==='h')),'Павел · Начальник разработки');
+ assert.equal(M.userLabel(staff.find(user=>user.id==='h')),'Павел · Руководитель разработки');
  assert.equal(M.projectTeamHint(M.projectLeaderChoices(staff),'leader'),'');
  assert.equal(M.projectTeamHint(M.projectManagerChoices(staff),'pm'),'');
  const saved=M.normalizeProjectTeam(staff,admins[0],{leaderId:'h',pmId:'p',members:['d','s']},null);

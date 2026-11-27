@@ -31,7 +31,7 @@ function moveProject(state,user,projectId,stageId){
  if(!stage)throw Error('Этап разработки не найден');
  if(project.devStage===stage.id)return project;
  project.devStage=stage.id;
- project.status=stage.name;
+ delete project.status;
  project.devHistory=Array.isArray(project.devHistory)?project.devHistory:[];
  project.devHistory.push({at:new Date().toISOString(),stageId:stage.id,by:user.id});
  return project;
@@ -87,7 +87,6 @@ function ensureFromWon(state,client,actorId){
   client:String(client.company||client.name||'Заказчик').trim()||'Заказчик',
   description:briefNow?.sold||'Сделка выиграна и передана в разработку.',
   type:'crm',
-  status:stages[0].name,
   devStage:'dev-start',
   devHistory:[{at:new Date().toISOString(),stageId:'dev-start',by:actorId||'',reason:'Сделка выиграна'}],
   leaderId:desk.defaultLeaderId||'',
