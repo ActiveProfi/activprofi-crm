@@ -165,14 +165,17 @@ function callNote(note){
  return `<p>${esc(text)}${link}</p>`;
 }
 function clientTimeline(client){
- const notes=(client.notes||[]).map(note=>callNote(note)).join('');
+ const feed=typeof ClientFeed!=='undefined'?ClientFeed.clientFeed(state,client):[];
+ const rows=feed.map(item=>`<div class="next-action"><strong>${esc(item.label)}</strong><small>${esc(item.at||'')}</small><p>${esc(item.text)}</p>${item.id&&client.project?action('Заявка в поддержку','support-from',client.id+':'+item.id):''}</div>`).join('');
+ const sales=(state.tasks||[]).filter(task=>task.clientId===client.id&&!task.projectId);
+ const salesRows=sales.map(task=>`<div class="next-action"><strong>${esc(task.kind==='todo'?'Дело':'Задача')}</strong><small>до ${esc(task.due||'')} · ${esc(task.status)}</small><p>${esc(task.title)}</p>${task.status==='Готово'?'':action('Готово','sales-done',task.id)}</div>`).join('');
  const history=(client.stageHistory||[]).map(item=>{
   const pipeline=state.pipelines.find(pipe=>pipe.id===client.pipelineId);
   const stage=pipeline?.stages.find(row=>row.id===item.stageId);
   const label=item.stageId?(stage?.name||'Этап'):'База лидов';
   return `<p><small>${esc(item.at||'')} · ${esc(label)}${item.reason?' · '+esc(item.reason):''}</small></p>`;
  }).join('');
- return `<h3 style="margin-top:22px">Комментарии</h3><div class="timeline">${notes||'<p>Пока нет комментариев. Напишите итог разговора ниже.</p>'}</div><h3>История этапов</h3><div class="timeline">${history||'<p>История появится, когда лид сменит этап.</p>'}</div>`;
+ return `<h3 style="margin-top:22px" id="client-feed-title">Лента клиента</h3><p class="hint">Письма, Telegram, звонки и заметки в одном списке. Старые записи тоже здесь.</p><div class="timeline" id="client-feed">${rows||'<p>Пока пусто. Напишите итог разговора ниже.</p>'}</div><h3 id="sales-tasks">Задачи и дела</h3><div class="actions">${action('Задача','sales-task',client.id)}${action('Дело','sales-todo',client.id)}${client.project?action('Заявка в поддержку','support-ask',client.id):''}</div>${salesRows||'<p class="hint">Задача или дело по этому клиенту, без проекта. Попадёт в «Кого не забыть» и в уведомления.</p>'}<h3>История этапов</h3><div class="timeline">${history||'<p>История появится, когда лид сменит этап.</p>'}</div>`;
 }
 let dragProject='';
 document.addEventListener('dragstart',event=>{const card=event.target.closest('[data-drag-project]');if(!card)return;dragProject=card.dataset.dragProject;event.dataTransfer.setData('text/plain',dragProject);event.dataTransfer.effectAllowed='move'});

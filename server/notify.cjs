@@ -26,6 +26,10 @@ function plan(before, after, actorId) {
     const prev = oldTasks.get(task.id);
     const project = projects.get(task.projectId);
     if (!prev) {
+      if (task.clientId && !task.projectId) {
+        events.push({userId: task.assigneeId || actorId, kind: 'sales-task', title: task.kind === 'todo' ? 'Новое дело' : 'Новая задача по клиенту', body: task.title || 'Задача', refKind: 'client', refId: task.clientId});
+        continue;
+      }
       push(events, {userId: task.assigneeId, kind: 'task-new', title: 'Новая задача', body: task.title || 'Задача', refKind: 'task', refId: task.id}, actorId);
       continue;
     }
