@@ -127,7 +127,50 @@ curl -s -X POST http://127.0.0.1:3212/api/integrations/leads \
   -d '{"batchName":"Исток · тест","leads":[{"name":"Иван Пример","vk":"https://vk.com/id1","telegram":"@example","phone":"+79990000000","email":"ivan@example.test","comment":"Интересовался CRM","postUrl":"https://vk.com/wall-1_2","source":"Исток","date":"2026-11-02"}]}'
 ```
 
-Тело может быть и просто массивом лидов. Если этап не указан, лиды попадают в базу без менеджера, чтобы их распределили в CRM. Повтор того же телефона, email или профиля не создаёт вторую карточку.
+Тело может быть и просто массивом лидов. Если этап не указан, лиды попадают в базу без менеджера, чтобы их распределили в CRM. Компания, сайт и другие контакты сохраняются. Город, сегмент и внешний номер `istokId` тоже записываются в карточку. Повтор того же телефона, email или профиля не создаёт вторую карточку: к существующей добавляются новые телефоны, почты и ссылки и заметка «обновлено из Истока». Этап, менеджер и воронка при этом не меняются.
+
+Ответ в режиме базы:
+
+```json
+{"received":2,"created":1,"updated":1,"skipped":0,"ids":["id-нового","id-старого"],"deals":[{"id":"id-нового","name":"Иван","status":"created"},{"id":"id-старого","name":"Иван","status":"updated"}]}
+```
+
+Ключ бывает двух видов. При создании в «Команда и роли» → «Ключи Истока» выберите одно:
+
+| `scope` | Что можно |
+| --- | --- |
+| `leads:write` | Присылать лиды. Забирать выборки этим ключом нельзя. |
+| `export:read` | Забирать выборки и выгрузку. Присылать лиды этим ключом нельзя. |
+
+Старые ключи без пометки работают как `leads:write`.
+
+Менеджер в «Клиентах» фильтрует этап, базу, источник и менеджера и нажимает «Отправить в рассылку». В список попадают только клиенты, которых он видит. Новичок и обычный менеджер не добавят чужих. Клиент с отметкой «не писать и не звонить» не попадает. Сама рассылка из CRM не отправляется.
+
+Исток забирает новые выборки ключом `export:read`:
+
+```sh
+curl -s "http://127.0.0.1:3212/api/integrations/selections?status=new" \
+  -H "Authorization: Bearer apk_КЛЮЧ_ВЫБОРОК"
+
+curl -s "http://127.0.0.1:3212/api/integrations/selections/ID?format=csv" \
+  -H "Authorization: Bearer apk_КЛЮЧ_ВЫБОРОК"
+
+curl -s -X POST "http://127.0.0.1:3212/api/integrations/selections/ID/ack" \
+  -H "Authorization: Bearer apk_КЛЮЧ_ВЫБОРОК"
+```
+
+Колонки CSV по порядку: Название, Контакт, Телефон, Email, VK, Telegram, Сайт, Город, Комментарий, CRM-ID. Файл в UTF-8 с меткой BOM, чтобы Excel открыл русские буквы. Разделитель — запятая. Комментарий собирается из этапа, последней заметки и заметки по статусу.
+
+После `ack` выборка получает статус «забрана». Повторный `ack` не ломает список.
+
+Общая выгрузка тем же ключом, без заранее собранной выборки:
+
+```sh
+curl -s "http://127.0.0.1:3212/api/integrations/export?stage=Новый&source=Исток&since=2026-11-01&format=csv" \
+  -H "Authorization: Bearer apk_КЛЮЧ_ВЫБОРОК"
+```
+
+CRM сама в Исток не обращается. Запросы всегда начинает Исток.
 
 ### Сделка сразу в этап воронки
 
@@ -184,8 +227,10 @@ curl -s -X POST http://127.0.0.1:3212/api/integrations/leads \
 - `GET/POST /api/tasks`, `GET/PATCH /api/tasks/:id`
 - `GET/POST /api/materials`, `GET/POST /api/messages`
 - `PUT/GET /api/files/:id` — файлы доски, до 20 МБ
-- `GET/POST /api/integration-keys`, `DELETE /api/integration-keys/:id`
-- `POST /api/integrations/leads` — только по ключу
+- `GET/POST /api/integration-keys`, `DELETE /api/integration-keys/:id` — у нового ключа поле `scope`: `leads:write` или `export:read`
+- `POST /api/integrations/leads` — только ключ `leads:write`
+- `GET /api/mailing-selections`, `POST /api/mailing-selections` — выборки для рассылки, по сессии
+- `GET /api/integrations/selections?status=new`, `GET /api/integrations/selections/:id?format=csv|json`, `POST /api/integrations/selections/:id/ack`, `GET /api/integrations/export` — только ключ `export:read`
 - `GET /api/migration/export`, `POST /api/migration/import`
 
 Чужие лиды менеджеру не отдаются: и список, и карточка по id. Сохранение не умеет стирать чужие записи, которых у пользователя нет на экране.

@@ -4,6 +4,7 @@ const store = require('./store.cjs');
 const {present, upgradeInPlace} = require('./guard.cjs');
 const {HttpError, domainError} = require('./errors.cjs');
 const {hashApiKey, newApiKey} = require('./passwords.cjs');
+const istok = require('./istok.cjs');
 const {normalizeDump, fallbackLogin} = require('./bootstrap.cjs');
 
 function command(db, user, fn) {
@@ -104,6 +105,14 @@ function fromIstok(raw) {
     stage: clip(raw.stage, 120),
     stageId: clip(raw.stageId, 80),
     stageName: clip(raw.stageName, 120),
+    site: clip(raw.site ?? raw.website ?? raw.url ?? raw['сайт'], 500),
+    website: clip(raw.website, 500),
+    other: clip(raw.other ?? raw.contacts ?? raw['другие контакты'], 2000),
+    contactBundle: clip(raw.contactBundle, 2000),
+    city: clip(raw.city ?? raw['город'], 120),
+    segment: raw.segment ?? raw.tags ?? raw['сегмент'] ?? raw['теги'] ?? '',
+    tags: raw.tags,
+    istokId: clip(raw.istokId ?? raw.externalId ?? raw['id источника'], 80),
   };
 }
 
@@ -112,6 +121,7 @@ function ingestLeads(db, keyRow, body, cfg) {
   if (!Array.isArray(list)) throw new HttpError(400, 'Ожидается массив лидов или объект {"leads": [...]}');
   if (!list.length) throw new HttpError(400, 'Список лидов пуст');
   if (list.length > 1000) throw new HttpError(400, 'За один запрос — не больше 1000 лидов');
+  if ((keyRow.scope || 'leads:write') !== 'leads:write') throw new HttpError(403, 'Этим ключом можно только забирать выборки, не принимать лиды');
   const records = list.map(fromIstok);
   const defaults = Array.isArray(body) ? {} : (body || {});
   const intoStage = Boolean(stageToken(defaults) || records.some(record => stageToken(record)));
@@ -147,77 +157,53 @@ function ingestLeads(db, keyRow, body, cfg) {
         store.bump(db);
       }
       store.addIntegrationImport(db, {
+        ...summary,
         id: crypto.randomUUID(),
         keyId: keyRow.id,
         source: 'deal',
-        ...summary,
         createdAt: new Date().toISOString(),
       });
       return;
     }
-    const legacy = records.map(record => ({
-      name: record.name, phone: record.phone, email: record.email, vk: record.vk, telegram: record.telegram, source: record.source, notes: record.notes,
-    }));
-    const headers = [...new Set(legacy.flatMap(record => Object.keys(record)))];
-    const rows = legacy.map(record => headers.map(header => record[header] ?? ''));
-    const map = headers.map(header => Leads.fields[header] ? header : '');
-    const opts = {
-      name: clip(body?.batchName, 180) || ('Исток · ' + M.today()),
+    summary = domainWrap(() => istok.ingestBase(state, records, {
       pipelineId,
-      destination: 'base',
-      kind: 'cold',
-      source: 'Исток',
-      file: 'Исток',
-      fileDate: M.today(),
-    };
-    const preview = domainWrap(() => Leads.preview(state, headers, rows, map, opts));
-    summary = {
-      received: records.length,
-      created: preview.filter(row => row.status === 'ready').length,
-      duplicates: preview.filter(row => row.status === 'duplicate').length,
-      errors: preview.filter(row => row.status === 'error').length,
-      batchId: '',
-    };
-    if (summary.created) {
-      const batch = domainWrap(() => Leads.commit(state, admin, headers, rows, map, opts));
-      batch.fileDate = opts.fileDate;
-      batch.integrationKeyId = keyRow.id;
-      summary.batchId = batch.id;
-      const fresh = state.clients.filter(client => client.batchId === batch.id);
-      summary.ids = fresh.map(client => client.id);
-      summary.deals = fresh.map(client => ({id: client.id, name: client.name, status: 'created'}));
-      if (summary.ids.length === 1) summary.id = summary.ids[0];
+      batchName: clip(body?.batchName, 180) || ('Исток · ' + M.today()),
+      keyId: keyRow.id,
+    }));
+    if (summary.created || summary.updated) {
       store.save(db, state);
       store.bump(db);
     }
     store.addIntegrationImport(db, {
+      ...summary,
       id: crypto.randomUUID(),
       keyId: keyRow.id,
       source: 'istok',
-      ...summary,
       createdAt: new Date().toISOString(),
     });
   });
   return summary;
 }
 
-function createIntegrationKey(db, user, name) {
+function createIntegrationKey(db, user, name, scope) {
   if (user.role !== 'admin') throw new HttpError(403, 'Ключи интеграций создаёт администратор');
   const title = clip(name, 120);
   if (!title) throw new HttpError(400, 'Укажите название ключа');
+  const kind = scope || 'leads:write';
+  if (!istok.SCOPES.includes(kind)) throw new HttpError(400, 'Ключ либо принимает лиды, либо отдаёт выборки');
   const key = newApiKey();
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   db.run(
-    'INSERT INTO integration_api_keys (id, name, prefix, key_hash, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    id, title, key.slice(0, 12), hashApiKey(key), user.id, createdAt,
+    'INSERT INTO integration_api_keys (id, name, prefix, key_hash, created_by, created_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, title, key.slice(0, 12), hashApiKey(key), user.id, createdAt, kind,
   );
-  return {id, name: title, prefix: key.slice(0, 12), key, createdAt};
+  return {id, name: title, prefix: key.slice(0, 12), key, createdAt, scope: kind};
 }
 
 function listIntegrationKeys(db, user) {
   if (user.role !== 'admin') throw new HttpError(403, 'Список ключей доступен администратору');
-  return db.all('SELECT id, name, prefix, created_by, created_at, revoked_at FROM integration_api_keys ORDER BY created_at DESC');
+  return db.all('SELECT id, name, prefix, scope, created_by, created_at, revoked_at FROM integration_api_keys ORDER BY created_at DESC').map(row => ({...row, scope: row.scope || 'leads:write'}));
 }
 
 function revokeIntegrationKey(db, user, id) {
@@ -231,9 +217,9 @@ function revokeIntegrationKey(db, user, id) {
 function findIntegrationKey(db, raw) {
   const key = String(raw || '').trim();
   if (!key.startsWith('apk_') || key.length > 200) return undefined;
-  const row = db.get('SELECT id, name, prefix, created_by, revoked_at FROM integration_api_keys WHERE key_hash = ?', hashApiKey(key));
+  const row = db.get('SELECT id, name, prefix, scope, created_by, revoked_at FROM integration_api_keys WHERE key_hash = ?', hashApiKey(key));
   if (!row || row.revoked_at) return undefined;
-  return row;
+  return {...row, scope: row.scope || 'leads:write'};
 }
 
 function exportDump(db, user) {
@@ -285,6 +271,6 @@ function importDump(db, user, body) {
 
 module.exports = {
   command, importLeads, groupBatch, distributeBatch, promoteBatch, archiveBatch, restoreBatch, ingestLeads,
-  createIntegrationKey, listIntegrationKeys, revokeIntegrationKey, findIntegrationKey,
+  createIntegrationKey, listIntegrationKeys, revokeIntegrationKey, findIntegrationKey, istok,
   exportDump, importDump,
 };
