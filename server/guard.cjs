@@ -38,12 +38,29 @@ function runDomain(fn) {
   catch (error) { throw domainError(error); }
 }
 
+function ensureLostStage(pipeline) {
+  if (!pipeline?.stages?.length) return false;
+  if (pipeline.stages.some(stage => stage.kind === 'lost')) return false;
+  pipeline.stages.push({id: 'lost-' + pipeline.id, name: 'Отказ', kind: 'lost'});
+  return true;
+}
+
 function upgradeInPlace(state) {
   const before = JSON.stringify(state);
   Leads.upgrade(state);
   Communications.upgrade(state);
   Inbox.upgrade(state);
   Delivery.upgrade(state);
+  for (const list of [state.clients, state.projects, state.tasks]) {
+    for (const item of list || []) if (!Number.isFinite(Number(item?.recordRev))) item.recordRev = 1;
+  }
+  for (const pipeline of state.pipelines || []) ensureLostStage(pipeline);
+  state.rolePermissions = state.rolePermissions || {};
+  if (!state.pmRightsVersion) {
+    state.rolePermissions.pm = {...(state.rolePermissions.pm || {}), 'projects.create': true, 'tasks.assign': true};
+    state.pmRightsVersion = 1;
+  }
+  state.desk = state.desk || {dutyUserId: '', defaultLeaderId: '', defaultPmId: ''};
   return JSON.stringify(state) !== before;
 }
 
@@ -104,12 +121,14 @@ function present(state, user) {
     messengerChannels: structuredClone(view.messengerChannels || []),
     conversations,
     externalMessages,
+    desk: structuredClone(view.desk || {dutyUserId: '', defaultLeaderId: '', defaultPmId: ''}),
     revision: view.revision,
   };
 }
 
 function workspacePayload(db, user) {
   const state = store.load(db);
+  if (upgradeInPlace(state)) store.save(db, state);
   const actor = state.users.find(item => item.id === user.id) || user;
   const view = present(state, actor);
   view.revision = store.revision(db);
@@ -221,6 +240,7 @@ function applyPipelines(state, user, incoming) {
     if (ids.has(pipeline.id)) throw new HttpError(400, 'Повторяется воронка');
     ids.add(pipeline.id);
     if (!Array.isArray(pipeline.stages) || !pipeline.stages.length) throw new HttpError(400, 'В воронке нужен хотя бы один этап');
+    if (!pipeline.stages.some(stage => stage.kind === 'lost')) throw new HttpError(400, 'В воронке нужен этап отказа');
     const local = new Set();
     for (const stage of pipeline.stages) {
       if (!stage?.id || !String(stage.name || '').trim()) throw new HttpError(400, 'Проверьте этап');
@@ -528,6 +548,48 @@ function applyGoogle(state, user, incoming) {
   state.googleClientId = String(next).slice(0, 200);
 }
 
+function saveRecords(db, user, items) {
+  if (!Array.isArray(items) || !items.length) throw new HttpError(400, 'Нет изменений для сохранения');
+  return db.transaction(() => {
+    const state = store.load(db);
+    upgradeInPlace(state);
+    const actor = state.users.find(item => item.id === user.id);
+    if (!actor) throw new HttpError(401, 'Пользователь не найден');
+    const names = {client: 'clients', project: 'projects', task: 'tasks'};
+    const fresh = new Set();
+    const presented = present(state, actor);
+    const incoming = structuredClone(presented);
+    for (const change of items) {
+      const listName = names[change?.kind];
+      if (!listName || !change.id) throw new HttpError(400, 'Некорректная запись');
+      const server = (state[listName] || []).find(item => item.id === change.id);
+      const rev = Number(change.rev) || 0;
+      if (server && rev !== (Number(server.recordRev) || 1)) {
+        throw new HttpError(409, 'Эту карточку уже изменили. Текст в форме сохранён — откройте карточку заново и перенесите правки.');
+      }
+      if (!server) fresh.add(change.id);
+      const copy = structuredClone(change.data || {});
+      copy.id = change.id;
+      copy.recordRev = server ? (Number(server.recordRev) || 1) : 1;
+      const index = incoming[listName].findIndex(item => item.id === change.id);
+      if (index >= 0) incoming[listName][index] = copy;
+      else incoming[listName].push(copy);
+    }
+    applyProjects(state, actor, presented, incoming);
+    applyClients(state, actor, presented, incoming);
+    applyTasks(state, actor, presented, incoming);
+    for (const change of items) {
+      const row = (state[names[change.kind]] || []).find(item => item.id === change.id);
+      if (row) row.recordRev = fresh.has(change.id) ? 1 : (Number(row.recordRev) || 1) + 1;
+    }
+    store.save(db, state);
+    const next = store.bump(db);
+    const view = present(state, actor);
+    view.revision = next;
+    return {revision: next, user: store.publicUser(actor), state: view};
+  });
+}
+
 function mergeWorkspace(db, user, revision, incoming) {
   return db.transaction(() => {
     const current = store.revision(db);
@@ -563,6 +625,14 @@ function mergeWorkspace(db, user, revision, incoming) {
     applyVoice(state, actor, presented, clean);
     applyInbox(state, actor, presented, clean);
     applyGoogle(state, actor, clean.googleClientId);
+    if (clean.desk && !same(state.desk, clean.desk)) {
+      if (actor.role !== 'admin') throw new HttpError(403, 'Назначения по умолчанию меняет администратор');
+      state.desk = {
+        dutyUserId: String(clean.desk.dutyUserId || ''),
+        defaultLeaderId: String(clean.desk.defaultLeaderId || ''),
+        defaultPmId: String(clean.desk.defaultPmId || ''),
+      };
+    }
     const passwords = {};
     for (const [id, password] of Object.entries(secrets.accepted)) passwords[id] = hashPassword(password);
     const changed = dirty || !same(present(storeSnapshot(state), actor), presented) || Object.keys(passwords).length > 0;
@@ -589,4 +659,4 @@ function storeSnapshot(state) {
   return state;
 }
 
-module.exports = {present, workspacePayload, mergeWorkspace, same, upgradeInPlace};
+module.exports = {present, workspacePayload, mergeWorkspace, saveRecords, same, upgradeInPlace, ensureLostStage};

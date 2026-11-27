@@ -128,9 +128,11 @@ test('missing telephony says so, and the admin check does not dial', async () =>
 
 test('webhook and statistics log the call, show a missed client, and offer an unknown number', async () => {
   const databasePath = baseDb();
-  const app = await start({host: '127.0.0.1', port: 0, databasePath, seedDemo: false, adminLogin: 'admin', adminPassword: 'admin-pass-1', adminName: 'Админ', sessionDays: 2, cookieSecure: false, telegramMock: true, telegramPoll: false, telegramBotToken: '', sipuniUser: '012345', sipuniSecret: 'test-secret', sipuniMock: true, sipuniSync: false});
+  const app = await start({host: '127.0.0.1', port: 0, databasePath, seedDemo: false, adminLogin: 'admin', adminPassword: 'admin-pass-1', adminName: 'Админ', sessionDays: 2, cookieSecure: false, telegramMock: true, telegramPoll: false, telegramBotToken: '', sipuniUser: '012345', sipuniSecret: 'test-secret', sipuniWebhookToken: 'hook-test-key', sipuniMock: true, sipuniSync: false});
   try {
-    const missed = await request(app.port, 'POST', '/api/sipuni/event', {raw: 'event=2&call_id=evt-1&src_num=79990000001&src_type=1&dst_num=012345201&dst_type=2&short_dst_num=201&status=NOANSWER&timestamp=1763892000&call_record_link=' + encodeURIComponent('https://sipuni.com/record/evt-1')});
+    const locked = await request(app.port, 'POST', '/api/sipuni/event', {raw: 'event=2&call_id=evt-locked&src_num=79990000001&src_type=1&dst_num=012345201&dst_type=2&status=NOANSWER'});
+    assert.equal(locked.status, 403);
+    const missed = await request(app.port, 'POST', '/api/sipuni/event', {raw: 'event=2&call_id=evt-1&src_num=79990000001&src_type=1&dst_num=012345201&dst_type=2&short_dst_num=201&status=NOANSWER&timestamp=1763892000&token=hook-test-key&call_record_link=' + encodeURIComponent('https://sipuni.com/record/evt-1')});
     assert.equal(missed.status, 200);
     assert.equal(missed.json.success, true);
     const elena = await login(app.port, 'elena', 'elena-pass-1');

@@ -7,6 +7,7 @@ const SETTING_KEYS = {
   manualFunnelVersion: 'manual_funnel_version',
   coldStageVersion: 'cold_stage_version',
   googleClientId: 'google_client_id',
+  desk: 'crm_desk',
 };
 
 function setting(db, key) {
@@ -104,6 +105,8 @@ function load(db) {
     rolePermissions: Object.fromEntries(db.all('SELECT role, data FROM role_permissions').map(row => [row.role, JSON.parse(row.data)])),
     permissionAudit: parseRows(db.all('SELECT data FROM permission_audit ORDER BY seq')),
     googleClientId: setting(db, 'google_client_id') || '',
+    desk: (() => { try { return JSON.parse(setting(db, 'crm_desk') || '') || {}; } catch { return {}; } })(),
+    pmRightsVersion: Number(setting(db, 'pm_rights_version') || 0),
   };
   const leadsVersion = setting(db, 'leads_version');
   const manual = setting(db, 'manual_funnel_version');
@@ -195,6 +198,8 @@ function save(db, state, options = {}) {
   if (state.manualFunnelVersion) putSetting(db, 'manual_funnel_version', state.manualFunnelVersion);
   if (state.coldStageVersion) putSetting(db, 'cold_stage_version', state.coldStageVersion);
   putSetting(db, 'google_client_id', state.googleClientId || '');
+  putSetting(db, 'crm_desk', JSON.stringify(state.desk || {}));
+  if (state.pmRightsVersion) putSetting(db, 'pm_rights_version', state.pmRightsVersion);
   for (const userId of options.dropSessionsFor || []) {
     if (options.keepSession && userId === options.keepUserId) {
       db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', userId, options.keepSession);

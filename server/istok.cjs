@@ -73,6 +73,7 @@ function mergeLead(client, data, record) {
   client.notes = Array.isArray(client.notes) ? client.notes : [];
   const extra = record.comment ? ': ' + record.comment : '';
   client.notes.unshift('обновлено из Истока' + extra);
+  client.recordRev = (Number(client.recordRev) || 1) + 1;
 }
 
 function createLead(state, data, record, pipelineId, batchId) {
@@ -206,6 +207,7 @@ function selectionPool(state, actor, filter) {
   else if (filter.stageId) pool = pool.filter(client => client.stageId === filter.stageId);
   if (filter.batchId) pool = pool.filter(client => client.batchId === filter.batchId);
   if (filter.source) pool = pool.filter(client => client.source === filter.source);
+  if (filter.lossReason) pool = pool.filter(client => client.lossReason === filter.lossReason);
   return pool.filter(client => !optedOut(client));
 }
 
@@ -217,6 +219,7 @@ function createSelection(db, user, body) {
     batchId: clip(body?.batchId, 80),
     source: clip(body?.source, 120),
     ownerId: clip(body?.ownerId, 80),
+    lossReason: clip(body?.lossReason, 40),
   };
   return db.transaction(() => {
     const state = store.load(db);

@@ -80,7 +80,7 @@ function handoverForm(client,stageId){
  const files=materials.map(item=>`<label class="member-choice"><input type="checkbox" name="file" value="${esc(item.name)}" checked>${esc(item.name)}</label>`).join('');
  const contacts=[client.phone,client.email,client.socials].map(value=>String(value||'').trim()).filter(Boolean).join('\n');
  const picked=chosenProposalText(client);
- modal('Передать в проект','<p class="hint">Бриф сохранится в проекте. Его увидят проджект и разработчики. Доску разработки менеджер не двигает. Сумма и вариант берутся из выбранного КП, их можно поправить.</p>'+area('Что продали','sold',client.description||client.clientTask||'')+area('Выбранный вариант КП','kp',picked.text||client.kpVariants||'')+field('Сумма','amount',picked.amount||client.amount||0,'number',true)+field('Срок','due',client.dealDate||'','date')+area('Контакты клиента','contacts',contacts)+field('Ссылка на КП','kpLink',client.kpLink||'','text')+(files?`<h3>Файлы</h3>${files}`:'<p class="hint">Отдельных файлов пока нет. Ссылка на КП сохранится в брифе.</p>'),'Передать в проект',fd=>{
+ modal('Передать в проект','<p class="hint">Бриф сохранится в проекте. Его увидят проджект и разработчики. Доску разработки менеджер не двигает. Сумма и вариант берутся из выбранного КП, их можно поправить.</p>'+area('Что продали','sold',client.description||client.clientTask||'')+area('Выбранный вариант КП','kp',picked.text||client.kpVariants||'')+field('Сумма','amount',picked.amount||client.amount||0,'number',true)+field('Срок','due',client.dealDate||'','date')+area('Контакты клиента','contacts',contacts)+field('Ссылка на КП','kpLink',client.kpLink||'','text')+(files?`<h3>Файлы</h3>${files}`:'<p class="hint">Отдельных файлов пока нет. Ссылка на КП сохранится в брифе.</p>')+'<label class="member-choice"><input type="checkbox" name="keepReminder"> Оставить напоминание «следующий контакт»</label>','Передать в проект',fd=>{
   const sold=String(fd.get('sold')||'').trim();
   if(!sold)throw Error('Напишите, что продали');
   client.handover={sold,kp:String(fd.get('kp')||'').trim(),amount:Number(fd.get('amount'))||0,due:String(fd.get('due')||'').trim(),contacts:String(fd.get('contacts')||'').trim(),kpLink:String(fd.get('kpLink')||'').trim(),files:fd.getAll('file'),at:new Date().toISOString(),by:u().id};
@@ -88,6 +88,7 @@ function handoverForm(client,stageId){
   client.kpVariants=client.handover.kp;
   client.kpLink=client.handover.kpLink;
   client.description=sold;
+  if(fd.get('keepReminder')!=='on'){client.next='';client.when='';}
   M.moveClient(state,u(),client.id,client.pipelineId,stageId);
   toast('Сделка передана в проект');
  });

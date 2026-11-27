@@ -2,6 +2,7 @@ let mailingStage = '';
 let mailingBatch = '';
 let mailingSource = '';
 let mailingOwner = '';
+let mailingLoss = '';
 let mailingSelections = [];
 let mailingShowList = false;
 
@@ -19,7 +20,7 @@ function mailingChoices() {
 
 function mailingToolbar() {
   const {stages, batches, sources, owners, wide} = mailingChoices();
-  return `<div class="toolbar mailing-toolbar"><select id="mailing-stage" aria-label="Этап выборки">${option('', 'Все этапы', mailingStage)}${option('base', 'Общая база', mailingStage)}${stages.map(stage => option(stage.id, stage.name, mailingStage)).join('')}</select><select id="mailing-batch" aria-label="База выборки">${option('', 'Все базы', mailingBatch)}${batches.map(batch => option(batch.id, batch.name, mailingBatch)).join('')}</select><select id="mailing-source" aria-label="Источник выборки">${option('', 'Все источники', mailingSource)}${sources.map(source => option(source, source, mailingSource)).join('')}</select>${wide ? `<select id="mailing-owner" aria-label="Чьи клиенты">${option('', 'Все менеджеры', mailingOwner)}${owners.map(person => option(person.id, person.name, mailingOwner)).join('')}</select>` : ''}${action('Отправить в рассылку', 'mailing-send', '', true)}${action('Выборки', 'mailing-list')}</div>${mailingShowList ? mailingListHtml() : ''}`;
+  return `<div class="toolbar mailing-toolbar"><select id="mailing-stage" aria-label="Этап выборки">${option('', 'Все этапы', mailingStage)}${option('base', 'Общая база', mailingStage)}${stages.map(stage => option(stage.id, stage.name, mailingStage)).join('')}</select><select id="mailing-batch" aria-label="База выборки">${option('', 'Все базы', mailingBatch)}${batches.map(batch => option(batch.id, batch.name, mailingBatch)).join('')}</select><select id="mailing-source" aria-label="Источник выборки">${option('', 'Все источники', mailingSource)}${sources.map(source => option(source, source, mailingSource)).join('')}</select>${wide ? `<select id="mailing-owner" aria-label="Чьи клиенты">${option('', 'Все менеджеры', mailingOwner)}${owners.map(person => option(person.id, person.name, mailingOwner)).join('')}</select>` : ''}<select id="mailing-loss" aria-label="Причина отказа">${option('', 'Все причины отказа', mailingLoss)}${[['price','Цена'],['timing','Сроки'],['other-vendor','Выбрал другого'],['no-need','Нет потребности'],['no-answer','Не отвечает'],['other','Другое']].map(([key,label]) => option(key, label, mailingLoss)).join('')}</select>${action('Отправить в рассылку', 'mailing-send', '', true)}${action('Выборки', 'mailing-list')}</div>${mailingShowList ? mailingListHtml() : ''}`;
 }
 
 function mailingListHtml() {
@@ -47,7 +48,7 @@ async function mailingSend(batchId) {
     const response = await fetch('/api/mailing-selections', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Requested-With': 'ActivProfi'},
-      body: JSON.stringify({name: fd.get('name'), stageId: mailingStage, batchId: mailingBatch, source: mailingSource, ownerId: mailingOwner}),
+      body: JSON.stringify({name: fd.get('name'), stageId: mailingStage, batchId: mailingBatch, source: mailingSource, ownerId: mailingOwner, lossReason: mailingLoss}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Error(data.error || 'Не удалось создать выборку');
@@ -93,4 +94,5 @@ document.addEventListener('change', event => {
   if (event.target.id === 'mailing-batch') mailingBatch = event.target.value;
   if (event.target.id === 'mailing-source') mailingSource = event.target.value;
   if (event.target.id === 'mailing-owner') mailingOwner = event.target.value;
+  if (event.target.id === 'mailing-loss') { mailingLoss = event.target.value; if (typeof render === 'function') render(); }
 });

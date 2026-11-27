@@ -21,7 +21,7 @@ function migrate(old){
  return {schema:2,users,pipelines:[pipeline,outbound],projects,clients,tasks,materials,messages:[],outbox:[]};
 }
 function project(s,id){return s.projects.find(p=>p.id===String(id))}
-function canProject(s,u,id){const p=project(s,id);return !!p&&has(s,u,'projects.view')&&(has(s,u,'projects.all')||(u.role==='leader'?p.leaderId===u.id:p.members.includes(u.id)))}
+function canProject(s,u,id){const p=project(s,id);return !!p&&has(s,u,'projects.view')&&(has(s,u,'projects.all')||(u.role==='leader'&&(!p.leaderId||p.leaderId===u.id))||(u.role!=='leader'&&p.members.includes(u.id)))}
 function canAssign(s,u,id){return canProject(s,u,id)&&has(s,u,'tasks.assign')}
 function canManage(s,u,id){return canProject(s,u,id)&&has(s,u,'projects.manage')}
 function visibleProjects(s,u){return s.projects.filter(p=>canProject(s,u,p.id))}

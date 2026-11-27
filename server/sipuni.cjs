@@ -195,7 +195,10 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
         notes = true;
       } else if (call.direction === 'in' && phone.length >= 10) {
         const known = db.get('SELECT client_id FROM sipuni_unknown WHERE phone = ?', phone);
-        if (!known?.client_id) db.run('INSERT INTO sipuni_unknown (phone, call_id, at, client_id) VALUES (?, ?, ?, ?) ON CONFLICT(phone) DO UPDATE SET call_id = excluded.call_id, at = excluded.at', phone, call.callId, call.at || new Date().toISOString(), '');
+        if (!known?.client_id) {
+          const assignee = unknownAssignee(state, call.extension);
+          db.run('INSERT INTO sipuni_unknown (phone, call_id, at, client_id, assignee) VALUES (?, ?, ?, ?, ?) ON CONFLICT(phone) DO UPDATE SET call_id = excluded.call_id, at = excluded.at, assignee = CASE WHEN sipuni_unknown.client_id = \'\' THEN excluded.assignee ELSE sipuni_unknown.assignee END', phone, call.callId, call.at || new Date().toISOString(), '', assignee);
+        }
       }
       if (notes) {
         store.save(db, state);
@@ -213,10 +216,22 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
     if (index < 0 && call.replaces) index = client.notes.findIndex(note => String(note).includes(`[[call:${call.replaces}]]`));
     if (index >= 0) client.notes[index] = text;
     else client.notes.unshift(text);
+    client.recordRev = (Number(client.recordRev) || 1) + 1;
+  }
+
+  function unknownAssignee(state, extension) {
+    const byLine = (state.users || []).find(item => String(item.sipuniExtension || '') === String(extension || '') && item.active !== false && !M.onProbation(item));
+    if (byLine) return byLine.id;
+    const duty = (state.users || []).find(item => item.id === state.desk?.dutyUserId && item.active !== false && !M.onProbation(item));
+    if (duty) return duty.id;
+    const pool = (state.users || []).filter(item => item.active !== false && !M.onProbation(item) && ['sales', 'rop', 'admin'].includes(item.role));
+    if (!pool.length) return '';
+    const count = db.get('SELECT COUNT(*) AS n FROM sipuni_unknown').n || 0;
+    return pool[count % pool.length].id;
   }
 
   function ingest(fields) {
-    if (webhookToken && String(fields.token || '') !== webhookToken) return {success: false, status: 403};
+    if (!webhookToken || String(fields.token || '') !== webhookToken) return {success: false, status: 403};
     const callId = String(fields.call_id || '').trim().slice(0, 80);
     if (!callId) return {success: true, status: 200};
     const srcExternal = String(fields.src_type) === '1';
@@ -342,12 +357,12 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
     const actor = state.users.find(item => item.id === sessionUser.id) || sessionUser;
     if (actor.role !== 'admin') throw new HttpError(403, 'Проверить телефонию может администратор');
     if (!configured()) throw new HttpError(400, OFF);
-    if (mock) return {ok: true, message: 'Телефония отвечает. Это учебная проверка, звонок клиенту не совершался.'};
+    if (mock) return {ok: true, eventKeySet: Boolean(webhookToken), message: 'Телефония отвечает. Это учебная проверка, звонок клиенту не совершался.'};
     const hash = sign([account, key]);
     const response = await postForm('https://sipuni.com/api/statistic/operators', {user: account, hash});
     if (!response.ok || response.payload.trim().startsWith('{')) throw new HttpError(502, 'Sipuni не подтвердил ключ. Проверьте SIPUNI_USER и SIPUNI_SECRET.');
     const rows = response.payload.split(/\r?\n/).filter(line => line.trim()).length;
-    return {ok: true, message: 'Телефония отвечает. Аккаунт ' + account + '. Строк в списке сотрудников: ' + Math.max(0, rows - 1) + '. Звонок не совершался.'};
+    return {ok: true, eventKeySet: Boolean(webhookToken), message: 'Телефония отвечает. Аккаунт ' + account + '. Строк в списке сотрудников: ' + Math.max(0, rows - 1) + '. Звонок не совершался.'};
   }
 
   function feed(sessionUser) {
@@ -363,9 +378,8 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
       if (!own && !M.has(state, actor, 'clients.all')) continue;
       missed.push({clientId: client.id, name: client.name, phone: client.phone || showPhone(row.phone), at: row.at});
     }
-    const unknown = M.has(state, actor, 'clients.edit')
-      ? db.all(`SELECT phone, at FROM sipuni_unknown WHERE client_id = '' ORDER BY at DESC LIMIT 20`).map(row => ({phone: showPhone(row.phone), digits: row.phone, at: row.at}))
-      : [];
+    const unknownRows = db.all(`SELECT phone, at, assignee FROM sipuni_unknown WHERE client_id = '' ORDER BY at DESC LIMIT 20`);
+    const unknown = M.onProbation(actor) ? [] : unknownRows.filter(row => actor.role === 'admin' || actor.role === 'rop' || row.assignee === actor.id).map(row => ({phone: showPhone(row.phone), digits: row.phone, at: row.at}));
     return {configured: configured(), extension: String(actor.sipuniExtension || ''), message: configured() ? '' : OFF, revision: store.revision(db), missed, unknown};
   }
 
@@ -385,12 +399,13 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
     if (!phone || phone.length < 10) throw new HttpError(400, 'Некорректный телефон');
     if (normalizePhone(body.confirmPhone || body.phone) !== phone) throw new HttpError(400, 'Подтвердите номер');
     const clientId = db.transaction(() => {
-      const row = db.get('SELECT phone, client_id FROM sipuni_unknown WHERE phone = ?', phone);
+      const row = db.get('SELECT phone, client_id, assignee FROM sipuni_unknown WHERE phone = ?', phone);
       if (!row || row.client_id) throw new HttpError(404, 'Этот номер уже разобрали');
       const state = store.load(db);
       upgradeInPlace(state);
       const actor = state.users.find(item => item.id === sessionUser.id);
-      if (!actor || !M.has(state, actor, 'clients.edit')) throw new HttpError(403, 'Создавать лиды может сотрудник с правом редактировать клиентов');
+      if (!actor || !M.has(state, actor, 'clients.edit') || M.onProbation(actor)) throw new HttpError(403, 'Создавать лид из неизвестного номера может дежурный, руководитель отдела или администратор');
+      if (actor.role !== 'admin' && actor.role !== 'rop' && row.assignee && row.assignee !== actor.id) throw new HttpError(403, 'Этот номер назначен другому сотруднику');
       const existing = matchClient(state, phone);
       if (existing) {
         db.run('UPDATE sipuni_unknown SET client_id = ? WHERE phone = ?', existing.id, phone);
@@ -398,10 +413,14 @@ function createSipuni({db, M, user = '', secret = '', webhookToken = '', mock = 
         return existing.id;
       }
       const id = 'call-' + crypto.randomBytes(4).toString('hex');
+      const pipe = state.pipelines[0];
+      const stage = pipe?.stages?.find(item => item.kind === 'open') || pipe?.stages?.[0];
+      const ownerId = row.assignee || actor.id;
       state.clients.push({
-        id, name, company: '', phone: showPhone(phone), email: '', socials: '', ownerId: actor.id, inLeadBase: true,
-        pipelineId: state.pipelines[0]?.id || '', stageId: '', amount: 0, source: 'Входящий звонок',
+        id, name, company: '', phone: showPhone(phone), email: '', socials: '', ownerId, inLeadBase: false,
+        pipelineId: pipe?.id || '', stageId: stage?.id || '', stage: stage?.name || '', amount: 0, source: 'Входящий звонок',
         notes: ['Лид из звонка ' + showPhone(phone)], next: 'Перезвонить', when: new Date().toISOString(), batchId: '', project: '',
+        stageHistory: stage ? [{at: M.today(), stageId: stage.id}] : [], recordRev: 1,
       });
       store.save(db, state);
       store.bump(db);
